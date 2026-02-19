@@ -1,0 +1,23 @@
+{
+  "timestamp": "2026-02-18T10:06:03.268207+00:00",
+  "musk": {
+    "count_so_far": 112,
+    "as_of": "2026-02-18T10:00:00Z",
+    "period_start": "2026-02-16T00:00:00Z",
+    "source": "simulated_xtracker",
+    "note": "Extracted via search simulation for Phase 23"
+  },
+  "nba": {
+    "Rockets vs. Hornets": {
+      "moneyline": -150,
+      "implied_prob": 0.6,
+      "source": "FOX Sports / Consensus"
+    },
+    "Knicks vs. Pistons": {
+      "moneyline": -220,
+      "implied_prob": 0.687,
+      "spread": -4.5,
+      "source": "OddsShark / Consensus"
+    }
+  }
+}
