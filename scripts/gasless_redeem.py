@@ -13,8 +13,15 @@ from py_clob_client.clob_types import BalanceAllowanceParams
 from py_builder_signing_sdk.signing.hmac import build_hmac_signature
 
 # === CONFIG ===
-PRIVATE_KEY = '0xc6ec1e43b77f1ec3301fc252276a442315a64cfeb404a167dad0e9feb756fdff'
-FUNDER = '0x528d07F3b854Ab55cFdD86F34E73262dE218CED8'
+import os as _os
+from dotenv import dotenv_values as _dotenv_values
+
+_env = _dotenv_values("/home/ubuntu/.openclaw/.polymarket-env")
+for _k, _v in _env.items():
+    _os.environ.setdefault(_k, _v)
+
+PRIVATE_KEY = _os.environ.get("POLYMARKET_PRIVATE_KEY", "")
+FUNDER = _os.environ.get("POLYMARKET_FUNDER", "0x528d07F3b854Ab55cFdD86F34E73262dE218CED8")
 RELAYER_URL = 'https://relayer-v2.polymarket.com'
 PROXY_FACTORY = '0xaB45c5A4B0c941a2F231C04C3f49182e1A254052'
 RELAY_HUB = '0xD216153c06E857cD7f72665E0aF1d7D82172F494'

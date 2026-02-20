@@ -1,0 +1,37 @@
+{
+  "updated": "2026-02-20T04:34:06.723455+00:00",
+  "markets": [
+    {
+      "ticker": "BYND",
+      "question": "Will Beyond Meat (BYND) beat quarterly earnings?",
+      "slug": "bynd-quarterly-earnings-gaap-eps-02-25-2026-neg0pt08",
+      "condition_id": "0x57089bd657907396fb040c773ec9b14de3bc7f16a9f2cb6184321f3cff7d49a0",
+      "yes_token": "75519038808944777332360883388891330846189158089083492769793806705452551839634",
+      "no_token": "111280451029727598829541314684399678904850157034181617750049114917301424866754",
+      "yes_price": 0.205,
+      "no_price": 0.795,
+      "volume_24h": 91545.09430300002,
+      "volume_total": 182270.127522,
+      "end_date": "2026-02-25",
+      "description": "As of market creation, Beyond Meat is estimated to release earnings on February 25, 2026. The Street consensus estimate for Beyond Meat's GAAP EPS for the relevant quarter is $-0.08 as of market creation. This market will resolve to \"Yes\" if Beyond Meat reports GAAP EPS greater than $-0.08 for the relevant quarter in its next quarterly earnings release. Otherwise, it will resolve to \"No.\" The resolution source will be the GAAP EPS listed in the company\u2019s official earnings documents. \n\nIf Beyond ",
+      "active": true,
+      "closed": false
+    },
+    {
+      "ticker": "WRBY",
+      "question": "Will Warby Parker (WRBY) beat quarterly earnings?",
+      "slug": "wrby-quarterly-earnings-gaap-eps-02-26-2026-0pt02",
+      "condition_id": "0x260bf48a49c69fbb8d79de5149c5a3dbbf3efa6460c09ea26bc13f81ff9f5f5e",
+      "yes_token": "91771303641376280941285506288487924222027123565704570823674359590762924337668",
+      "no_token": "95279326606466559566066926907983397708716792267295096157866553906933811478634",
+      "yes_price": 0.4,
+      "no_price": 0.6,
+      "volume_24h": 6.449274,
+      "volume_total": 3940.482676,
+      "end_date": "2026-02-26",
+      "description": "As of market creation, Warby Parker is estimated to release earnings on February 26, 2026. The Street consensus estimate for Warby Parker's GAAP EPS for the relevant quarter is $0.02 as of market creation. This market will resolve to \"Yes\" if Warby Parker reports GAAP EPS greater than $0.02 for the relevant quarter in its next quarterly earnings release. Otherwise, it will resolve to \"No.\" The resolution source will be the GAAP EPS listed in the company\u2019s official earnings documents. \n\nIf Warby ",
+      "active": true,
+      "closed": false
+    }
+  ]
+}

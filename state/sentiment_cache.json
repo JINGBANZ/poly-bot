@@ -1,0 +1,220 @@
+{
+  "will-sinners-win-best-picture-at-the-98th-academy-awards": {
+    "title": "Will Sinners win Best Picture at the 98th Academy Awards?",
+    "score": 0.176,
+    "confidence": "medium",
+    "total_mentions": 8,
+    "bullish_signals": 10,
+    "bearish_signals": 7,
+    "sources": {
+      "twitter": {
+        "mentions": 6,
+        "bullish_signals": 7,
+        "bearish_signals": 7
+      },
+      "reddit_news": {
+        "mentions": 2,
+        "bullish_signals": 3,
+        "bearish_signals": 0
+      }
+    },
+    "notable_takes": [
+      {
+        "source": "twitter",
+        "title": "2026 Oscar winner predictions",
+        "url": "https://ew.com",
+        "signal": "bullish"
+      },
+      {
+        "source": "twitter",
+        "title": "2026 Oscars Predictions",
+        "url": "https://variety.com",
+        "signal": "bullish"
+      },
+      {
+        "source": "twitter",
+        "title": "Oscars 2026 Predictions: Underdogs",
+        "url": "https://covers.com",
+        "signal": "bearish"
+      },
+      {
+        "source": "twitter",
+        "title": "Best Picture Markets vs Experts",
+        "url": "https://covers.com",
+        "signal": "bearish"
+      },
+      {
+        "source": "reddit_news",
+        "title": "Variety Oscars Predictions",
+        "url": "https://variety.com",
+        "signal": "bullish"
+      }
+    ],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "will-sean-penn-win-best-supporting-actor-at-the-98th-academy-awards": {
+    "title": "Will Sean Penn win Best Supporting Actor at the 98th Academy Awards?",
+    "score": 0.111,
+    "confidence": "medium",
+    "total_mentions": 7,
+    "bullish_signals": 5,
+    "bearish_signals": 4,
+    "sources": {
+      "twitter": {
+        "mentions": 4,
+        "bullish_signals": 1,
+        "bearish_signals": 2
+      },
+      "reddit_news": {
+        "mentions": 3,
+        "bullish_signals": 4,
+        "bearish_signals": 2
+      }
+    },
+    "notable_takes": [
+      {
+        "source": "reddit_news",
+        "title": "BruinLife predicts Oscar winners",
+        "url": "https://bruinlife.com",
+        "signal": "bullish"
+      },
+      {
+        "source": "reddit_news",
+        "title": "Vanity Fair Oscars",
+        "url": "https://vanityfair.com",
+        "signal": "bullish"
+      }
+    ],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "israel-strikes-iran-by-february-28-2026": {
+    "title": "Israel strikes Iran by February 28, 2026?",
+    "score": 0.0,
+    "confidence": "medium",
+    "total_mentions": 7,
+    "bullish_signals": 2,
+    "bearish_signals": 2,
+    "sources": {
+      "twitter": {
+        "mentions": 4,
+        "bullish_signals": 1,
+        "bearish_signals": 1
+      },
+      "reddit_news": {
+        "mentions": 3,
+        "bullish_signals": 1,
+        "bearish_signals": 1
+      }
+    },
+    "notable_takes": [],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "will-google-have-the-best-ai-model-at-the-end-of-february-2026": {
+    "title": "Will Google have the best AI model at the end of February 2026?",
+    "score": 0.5,
+    "confidence": "medium",
+    "total_mentions": 6,
+    "bullish_signals": 3,
+    "bearish_signals": 1,
+    "sources": {
+      "twitter": {
+        "mentions": 4,
+        "bullish_signals": 2,
+        "bearish_signals": 1
+      },
+      "reddit_news": {
+        "mentions": 2,
+        "bullish_signals": 1,
+        "bearish_signals": 0
+      }
+    },
+    "notable_takes": [
+      {
+        "source": "twitter",
+        "title": "Best AI February 2026 Rankings",
+        "url": "https://felloai.com",
+        "signal": "bullish"
+      }
+    ],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "will-italy-win-the-second-most-gold-medals-in-the-2026-winter-olympics": {
+    "title": "Will Italy win the second most gold medals in the 2026 Winter Olympics?",
+    "score": 0.0,
+    "confidence": "low",
+    "total_mentions": 0,
+    "bullish_signals": 0,
+    "bearish_signals": 0,
+    "sources": {
+      "twitter": {
+        "mentions": 0,
+        "bullish_signals": 0,
+        "bearish_signals": 0
+      },
+      "reddit_news": {
+        "mentions": 0,
+        "bullish_signals": 0,
+        "bearish_signals": 0
+      }
+    },
+    "notable_takes": [],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "will-sentimental-value-win-best-original-screenplay-at-the-98th-academy-awards": {
+    "title": "Will Sentimental Value win Best Original Screenplay at the 98th Academy Awards?",
+    "score": 1.0,
+    "confidence": "low",
+    "total_mentions": 2,
+    "bullish_signals": 5,
+    "bearish_signals": 0,
+    "sources": {
+      "twitter": {
+        "mentions": 1,
+        "bullish_signals": 2,
+        "bearish_signals": 0
+      },
+      "reddit_news": {
+        "mentions": 1,
+        "bullish_signals": 3,
+        "bearish_signals": 0
+      }
+    },
+    "notable_takes": [
+      {
+        "source": "twitter",
+        "title": "Variety 2026 Oscars Predictions",
+        "url": "https://variety.com",
+        "signal": "bullish"
+      },
+      {
+        "source": "reddit_news",
+        "title": "EW Oscar predictions",
+        "url": "https://ew.com",
+        "signal": "bullish"
+      }
+    ],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  },
+  "bynd-quarterly-earnings-gaap-eps-02-25-2026-neg0pt08": {
+    "title": "Will Beyond Meat (BYND) beat quarterly earnings?",
+    "score": 0.0,
+    "confidence": "low",
+    "total_mentions": 0,
+    "bullish_signals": 0,
+    "bearish_signals": 0,
+    "sources": {
+      "twitter": {
+        "mentions": 0,
+        "bullish_signals": 0,
+        "bearish_signals": 0
+      },
+      "reddit_news": {
+        "mentions": 0,
+        "bullish_signals": 0,
+        "bearish_signals": 0
+      }
+    },
+    "notable_takes": [],
+    "scanned_at": "2026-02-20T06:45:55.583912+00:00"
+  }
+}

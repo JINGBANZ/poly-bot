@@ -1,0 +1,243 @@
+{
+  "summary": {
+    "total_trades": 28,
+    "wins": 25,
+    "win_rate": 0.893,
+    "total_pnl": 9.04,
+    "expected_value_per_trade": 0.323,
+    "avg_edge": 0.393,
+    "earnings_strategy_roi": 0.566,
+    "comparison": {
+      "earnings_win_rate": 0.893,
+      "crypto_win_rate": 0.55,
+      "earnings_ev": 0.323,
+      "crypto_ev": 0.08
+    }
+  },
+  "trades": [
+    {
+      "ticker": "ICUI",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "EBAY",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "FNF",
+      "beat_rate": 0.65,
+      "decision": "YES",
+      "resolution": "NO",
+      "correct": false,
+      "pnl": -0.57
+    },
+    {
+      "ticker": "ETSY",
+      "beat_rate": 0.7,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "DBX",
+      "beat_rate": 0.85,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "ED",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "WMT",
+      "beat_rate": 0.85,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "AKAM",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "OPEN",
+      "beat_rate": 0.35,
+      "decision": "NO",
+      "resolution": "NO",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "DE",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "BKNG",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "OXY",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "ADI",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "MCO",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "WAY",
+      "beat_rate": 0.35,
+      "decision": "NO",
+      "resolution": "NO",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "TSEM",
+      "beat_rate": 0.8,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "BGC",
+      "beat_rate": 0.65,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "USFD",
+      "beat_rate": 0.7,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "HUBS",
+      "beat_rate": 0.9,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "KHC",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "APP",
+      "beat_rate": 0.85,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "DD",
+      "beat_rate": 0.7,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "GTM",
+      "beat_rate": 0.65,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "CHGG",
+      "beat_rate": 0.3,
+      "decision": "NO",
+      "resolution": "YES",
+      "correct": false,
+      "pnl": -0.57
+    },
+    {
+      "ticker": "ACM",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "PTON",
+      "beat_rate": 0.3,
+      "decision": "NO",
+      "resolution": "NO",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "NWSA",
+      "beat_rate": 0.65,
+      "decision": "YES",
+      "resolution": "YES",
+      "correct": true,
+      "pnl": 0.43
+    },
+    {
+      "ticker": "KKR",
+      "beat_rate": 0.75,
+      "decision": "YES",
+      "resolution": "NO",
+      "correct": false,
+      "pnl": -0.57
+    }
+  ]
+}

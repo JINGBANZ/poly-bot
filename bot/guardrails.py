@@ -70,7 +70,7 @@ def _try_sell(pos: Position, reason: str, detail: str) -> GuardrailResult:
             f"{reason} triggered ({detail}) but depth=${bid_depth:.2f} < min ${config.MIN_BID_DEPTH_USD}")
 
     sell_price = max(bid_price - 0.01, config.MIN_SELL_PRICE)
-    action = "SELL_SL" if reason == "SL" else "SELL_TP"
+    action = "SELL_SL" if reason == "SL" else "SELL_TP" if reason == "TP" else "SELL_EXIT"
     return GuardrailResult(action, pos,
         f"{reason}: sell {pos.size:.1f} @ {sell_price:.3f} ({detail})")
 
