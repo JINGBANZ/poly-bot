@@ -27,7 +27,33 @@ def check_position(pos: Position) -> GuardrailResult:
     if pos.pnl_pct >= config.TAKE_PROFIT_PCT:
         return _try_sell(pos, "TP", f"up {pos.pnl_pct:.0%}")
 
+    # Active sell check: positions we want to exit regardless of SL/TP
+    # These are positions identified as "no edge, should dump"
+    if _should_actively_sell(pos):
+        return _try_sell(pos, "EXIT", f"no edge, actively selling")
+
     return GuardrailResult("HOLD", pos, f"{pos.pnl_pct:+.1%}")
+
+
+# Positions we want to actively exit (set via state file or hardcode)
+ACTIVE_SELL_LIST = []  # populated by load_sell_list()
+
+def load_sell_list():
+    """Load list of position slugs/titles we want to actively sell."""
+    import json, os
+    sell_file = os.path.join(config.STATE_DIR, "sell_list.json")
+    if os.path.exists(sell_file):
+        with open(sell_file) as f:
+            return json.load(f)
+    return []
+
+def _should_actively_sell(pos: Position) -> bool:
+    """Check if this position is on the active sell list."""
+    sell_list = load_sell_list()
+    for item in sell_list:
+        if item.lower() in pos.title.lower():
+            return True
+    return False
 
 
 def _try_sell(pos: Position, reason: str, detail: str) -> GuardrailResult:

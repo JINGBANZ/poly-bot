@@ -78,12 +78,37 @@ def run_cycle(dry_run=False) -> dict:
             log(f"  {gr}")
             write_alert(f"{'🔴' if 'SL' in gr.action else '🟢'} {gr.detail}")
             if not dry_run:
-                # TODO: Execute sell via CLOB API
-                pass
+                from .api import place_sell_order
+                # Extract sell price from detail string
+                import re
+                match = re.search(r'sell [\d.]+ @ ([\d.]+)', gr.detail)
+                if match:
+                    sell_price = float(match.group(1))
+                    result = place_sell_order(pos.token_id, pos.size, sell_price)
+                    if result and "error" not in result:
+                        log(f"    ✅ Sell order placed: {result}")
+                        write_alert(f"✅ SOLD: {pos.title} — {pos.size:.1f} @ {sell_price:.3f}")
+                    else:
+                        log(f"    ❌ Sell failed: {result}")
         elif gr.action == "NO_LIQUIDITY":
             log(f"  🛑 {gr.position.title}: {gr.detail}")
 
-    # 3. Save state
+    # 3. News scan (every 6th cycle = ~30 min)
+    cycle_count = getattr(run_cycle, '_count', 0) + 1
+    run_cycle._count = cycle_count
+    if cycle_count % 6 == 1:  # first cycle + every 30 min
+        try:
+            from .news import scan_news_for_positions
+            titles = [p.title for p in portfolio.positions]
+            findings = scan_news_for_positions(titles)
+            for f in findings:
+                tweets_summary = " | ".join(t["text"][:80] for t in f["notable_tweets"][:2])
+                log(f"  📰 {f['position'][:30]}: {tweets_summary}")
+                write_alert(f"📰 News for {f['position'][:30]}: {tweets_summary}")
+        except Exception as e:
+            log(f"  ⚠️ News scan error: {e}")
+
+    # 4. Save state
     portfolio.save()
 
     log(f"📋 Results: {results}")

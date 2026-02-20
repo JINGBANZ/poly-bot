@@ -1,11 +1,11 @@
 {
-  "updated": "2026-02-20T02:04:27.144695+00:00",
+  "updated": "2026-02-20T03:47:54.207482+00:00",
   "summary": {
     "count": 7,
     "cost": 15.3,
-    "value": 8.76,
-    "pnl": -6.54,
-    "pnl_pct": -42.7
+    "value": 8.69,
+    "pnl": -6.61,
+    "pnl_pct": -43.2
   },
   "positions": [
     {
@@ -28,10 +28,10 @@
       "outcome": "Yes",
       "size": 10.4,
       "entry_price": 0.459,
-      "current_price": 0.1065,
+      "current_price": 0.1015,
       "cost": 4.77,
-      "value": 1.11,
-      "pnl_pct": -76.8,
+      "value": 1.06,
+      "pnl_pct": -77.9,
       "condition_id": "0xaf84ac41b70ed44d89a0786172528475afbc41b1de41955e53bf403dcb29835c",
       "token_id": "26763796227093385389238049506291521102844214410541553072801638416728642140084",
       "end_date": "2026-02-22"
@@ -42,10 +42,10 @@
       "outcome": "Yes",
       "size": 9.1,
       "entry_price": 0.11,
-      "current_price": 0.112,
+      "current_price": 0.11,
       "cost": 1.0,
-      "value": 1.02,
-      "pnl_pct": 1.8,
+      "value": 1.0,
+      "pnl_pct": 0.0,
       "condition_id": "0x06c4d9758efa3f60130856d5de044d3dded03ffeed7d8d8293d3a1074d483efa",
       "token_id": "30476697811633802974247041377294063298426690258762441493799507947314360002930",
       "end_date": "2026-03-15"
@@ -70,10 +70,10 @@
       "outcome": "Yes",
       "size": 7.0,
       "entry_price": 0.44,
-      "current_price": 0.14,
+      "current_price": 0.13,
       "cost": 3.08,
-      "value": 0.98,
-      "pnl_pct": -68.2,
+      "value": 0.91,
+      "pnl_pct": -70.5,
       "condition_id": "0x6995678ed5f481941cc4de37512cfe77b1b20e6fd9ba35e284360061d2687d8f",
       "token_id": "73863389047364311729171625226082439999288548227803524810816150400327376572888",
       "end_date": "2026-02-28"
@@ -84,10 +84,10 @@
       "outcome": "Yes",
       "size": 7.0,
       "entry_price": 0.27,
-      "current_price": 0.185,
+      "current_price": 0.195,
       "cost": 1.89,
-      "value": 1.29,
-      "pnl_pct": -31.5,
+      "value": 1.36,
+      "pnl_pct": -27.8,
       "condition_id": "0x291f0f6023efa933d36cc80fd55f9d176309a92b61b9567fd4f044a8b21873fb",
       "token_id": "85324706404898418733124688475544132829833150847063731129342470870679237865517",
       "end_date": "2026-02-28"

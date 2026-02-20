@@ -123,3 +123,20 @@ def cancel_order(order_id: str) -> bool:
         return order_id in result.get("canceled", [])
     except:
         return False
+
+def place_sell_order(token_id: str, size: float, price: float) -> dict | None:
+    """Place a limit sell order. Returns order result or None on failure."""
+    client = get_clob_client()
+    if not client:
+        return None
+    try:
+        from py_clob_client.order_builder.constants import BUY, SELL
+        order = client.create_and_post_order({
+            "token_id": token_id,
+            "price": price,
+            "size": size,
+            "side": SELL,
+        })
+        return order
+    except Exception as e:
+        return {"error": str(e)}
