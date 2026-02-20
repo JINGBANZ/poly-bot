@@ -108,7 +108,26 @@ def run_cycle(dry_run=False) -> dict:
         except Exception as e:
             log(f"  ⚠️ News scan error: {e}")
 
-    # 4. Save state
+    # 4. Analyst cycle (every 6th cycle = ~30 min) — build context for LLM
+    if cycle_count % 6 == 1:
+        try:
+            from .analyst import build_context, get_pending_recommendations
+            context = build_context(
+                portfolio.summary(),
+                findings if 'findings' in dir() else [],
+            )
+            # Context is written to file — OpenClaw session picks it up
+            
+            # Check for approved recommendations to execute
+            approved = [r for r in get_pending_recommendations() if r.get("status") == "APPROVED"]
+            for reco in approved:
+                log(f"  ✅ Executing approved reco: {reco['action']} {reco['position']}")
+                write_alert(f"✅ Executing: {reco['action']} {reco['position']}")
+                # TODO: Execute based on reco type
+        except Exception as e:
+            log(f"  ⚠️ Analyst error: {e}")
+
+    # 5. Save state
     portfolio.save()
 
     log(f"📋 Results: {results}")
