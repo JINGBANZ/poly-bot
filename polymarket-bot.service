@@ -1,0 +1,15 @@
+[Unit]
+Description=Polymarket Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/.openclaw/workspace/polymarket-bot
+EnvironmentFile=/home/ubuntu/.openclaw/.polymarket-env
+ExecStart=/usr/bin/python3 -m bot.main
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

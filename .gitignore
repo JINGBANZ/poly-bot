@@ -1,0 +1,31 @@
+# Secrets & credentials
+.env
+*.env
+polymarket-env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# All state files (generated at runtime)
+state/
+
+# Legacy root-level data files
+positions.json
+price_history.json
+market_cache.json
+spread_log.jsonl
+
+# Data dir runtime files
+data/*.json
+
+# Logs
+logs/
+*.log
+node_modules/
