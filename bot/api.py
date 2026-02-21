@@ -124,13 +124,13 @@ def cancel_order(order_id: str) -> bool:
     except:
         return False
 
-def place_sell_order(token_id: str, size: float, price: float) -> dict | None:
-    """Place a limit sell order. Returns order result or None on failure."""
+def place_limit_sell(token_id: str, size: float, price: float) -> dict | None:
+    """Place a GTC limit sell order. Returns order result or None on failure."""
     client = get_clob_client()
     if not client:
         return None
     try:
-        from py_clob_client.order_builder.constants import BUY, SELL
+        from py_clob_client.order_builder.constants import SELL
         order = client.create_and_post_order({
             "token_id": token_id,
             "price": price,
@@ -138,5 +138,60 @@ def place_sell_order(token_id: str, size: float, price: float) -> dict | None:
             "side": SELL,
         })
         return order
+    except Exception as e:
+        return {"error": str(e)}
+
+def market_sell(token_id: str, amount: float) -> dict | None:
+    """Market sell (FOK) — sweeps the book like the Polymarket UI does.
+    
+    Args:
+        token_id: The token to sell
+        amount: Dollar amount to sell (not share count)
+    
+    This is how the UI sells: creates a Fill-or-Kill market order
+    that takes whatever liquidity is available.
+    """
+    client = get_clob_client()
+    if not client:
+        return None
+    try:
+        from py_clob_client.clob_types import MarketOrderArgs, OrderType
+        from py_clob_client.order_builder.constants import SELL
+        
+        mo = MarketOrderArgs(
+            token_id=token_id,
+            amount=amount,
+            side=SELL,
+            order_type=OrderType.FOK,
+        )
+        signed = client.create_market_order(mo)
+        resp = client.post_order(signed, OrderType.FOK)
+        return resp
+    except Exception as e:
+        return {"error": str(e)}
+
+def market_buy(token_id: str, amount: float) -> dict | None:
+    """Market buy (FOK) — sweeps the book like the Polymarket UI does.
+    
+    Args:
+        token_id: The token to buy
+        amount: Dollar amount to spend
+    """
+    client = get_clob_client()
+    if not client:
+        return None
+    try:
+        from py_clob_client.clob_types import MarketOrderArgs, OrderType
+        from py_clob_client.order_builder.constants import BUY
+        
+        mo = MarketOrderArgs(
+            token_id=token_id,
+            amount=amount,
+            side=BUY,
+            order_type=OrderType.FOK,
+        )
+        signed = client.create_market_order(mo)
+        resp = client.post_order(signed, OrderType.FOK)
+        return resp
     except Exception as e:
         return {"error": str(e)}

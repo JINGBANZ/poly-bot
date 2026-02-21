@@ -76,20 +76,18 @@ def run_cycle(dry_run=False) -> dict:
 
         if gr.action.startswith("SELL"):
             log(f"  {gr}")
-            write_alert(f"{'🔴' if 'SL' in gr.action else '🟢'} {gr.detail}")
+            emoji = "🔴" if "SL" in gr.action else ("🟢" if "TP" in gr.action else "🟡")
+            write_alert(f"{emoji} {gr.detail}")
             if not dry_run:
-                from .api import place_sell_order
-                # Extract sell price from detail string
-                import re
-                match = re.search(r'sell [\d.]+ @ ([\d.]+)', gr.detail)
-                if match:
-                    sell_price = float(match.group(1))
-                    result = place_sell_order(pos.token_id, pos.size, sell_price)
-                    if result and "error" not in result:
-                        log(f"    ✅ Sell order placed: {result}")
-                        write_alert(f"✅ SOLD: {pos.title} — {pos.size:.1f} @ {sell_price:.3f}")
-                    else:
-                        log(f"    ❌ Sell failed: {result}")
+                from .api import market_sell
+                sell_amount = pos.size * pos.current  # dollar value
+                result = market_sell(pos.token_id, sell_amount)
+                if result and "error" not in str(result):
+                    log(f"    ✅ Market sell executed: {result}")
+                    write_alert(f"✅ SOLD: {pos.title} — {pos.size:.1f} shares for ~${sell_amount:.2f}")
+                else:
+                    log(f"    ❌ Market sell failed: {result}")
+                    write_alert(f"❌ Sell failed for {pos.title}: {result}")
         elif gr.action == "NO_LIQUIDITY":
             log(f"  🛑 {gr.position.title}: {gr.detail}")
 

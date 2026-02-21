@@ -1,12 +1,11 @@
 """Guardrails module — stop-loss, take-profit, and entry validation."""
 
 from . import config
-from .api import get_book, best_bid
 from .portfolio import Position
 
 class GuardrailResult:
     def __init__(self, action: str, position: Position, detail: str = ""):
-        self.action = action  # HOLD, SELL_SL, SELL_TP, NO_LIQUIDITY, SKIP
+        self.action = action  # HOLD, SELL_SL, SELL_TP, SELL_EXIT, SKIP
         self.position = position
         self.detail = detail
 
@@ -27,52 +26,43 @@ def check_position(pos: Position) -> GuardrailResult:
     if pos.pnl_pct >= config.TAKE_PROFIT_PCT:
         return _try_sell(pos, "TP", f"up {pos.pnl_pct:.0%}")
 
-    # Active sell check: positions we want to exit regardless of SL/TP
-    # These are positions identified as "no edge, should dump"
+    # Active sell check: positions on the sell list
     if _should_actively_sell(pos):
         return _try_sell(pos, "EXIT", f"no edge, actively selling")
 
     return GuardrailResult("HOLD", pos, f"{pos.pnl_pct:+.1%}")
 
 
-# Positions we want to actively exit (set via state file or hardcode)
-ACTIVE_SELL_LIST = []  # populated by load_sell_list()
+def _try_sell(pos: Position, reason: str, detail: str) -> GuardrailResult:
+    """Prepare a market sell (FOK) — same mechanism as the Polymarket UI.
+    
+    No longer checks orderbook bids. The UI doesn't check either — it just
+    submits a FOK order and takes whatever liquidity exists. If the order
+    can't fill, FOK fails gracefully (no partial fills, no stuck orders).
+    """
+    sell_value = pos.size * pos.current
+    
+    if sell_value < 0.01:
+        return GuardrailResult("NO_LIQUIDITY", pos,
+            f"{reason} triggered ({detail}) but position value < $0.01")
+    
+    action = "SELL_SL" if reason == "SL" else ("SELL_TP" if reason == "TP" else "SELL_EXIT")
+    return GuardrailResult(action, pos,
+        f"{reason}: market_sell {pos.size:.1f} shares, ~${sell_value:.2f} ({detail})")
 
-def load_sell_list():
-    """Load list of position slugs/titles we want to actively sell."""
-    import json, os
-    sell_file = os.path.join(config.STATE_DIR, "sell_list.json")
-    if os.path.exists(sell_file):
-        with open(sell_file) as f:
-            return json.load(f)
-    return []
 
 def _should_actively_sell(pos: Position) -> bool:
     """Check if this position is on the active sell list."""
-    sell_list = load_sell_list()
-    for item in sell_list:
-        if item.lower() in pos.title.lower():
-            return True
-    return False
-
-
-def _try_sell(pos: Position, reason: str, detail: str) -> GuardrailResult:
-    """Check liquidity and determine if we can sell."""
-    book = get_book(pos.token_id)
-    bid_price, bid_depth = best_bid(book)
-
-    if bid_price < config.MIN_SELL_PRICE:
-        return GuardrailResult("NO_LIQUIDITY", pos,
-            f"{reason} triggered ({detail}) but bid={bid_price:.3f} < min {config.MIN_SELL_PRICE}")
-
-    if bid_depth < config.MIN_BID_DEPTH_USD:
-        return GuardrailResult("NO_LIQUIDITY", pos,
-            f"{reason} triggered ({detail}) but depth=${bid_depth:.2f} < min ${config.MIN_BID_DEPTH_USD}")
-
-    sell_price = max(bid_price - 0.01, config.MIN_SELL_PRICE)
-    action = "SELL_SL" if reason == "SL" else "SELL_TP" if reason == "TP" else "SELL_EXIT"
-    return GuardrailResult(action, pos,
-        f"{reason}: sell {pos.size:.1f} @ {sell_price:.3f} ({detail})")
+    import json, os
+    sell_file = os.path.join(config.STATE_DIR, "sell_list.json")
+    if not os.path.exists(sell_file):
+        return False
+    try:
+        with open(sell_file) as f:
+            sell_list = json.load(f)
+        return any(item.lower() in pos.title.lower() for item in sell_list)
+    except:
+        return False
 
 
 def validate_entry(price: float, volume_24h: float) -> tuple[bool, str]:
