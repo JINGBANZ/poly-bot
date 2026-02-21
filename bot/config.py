@@ -30,6 +30,12 @@ MAX_POSITION_USD = 2.00       # Max $2 per new position
 VALUE_ZONE_MIN = 0.10         # Only enter above 10¢
 VALUE_ZONE_MAX = 0.45         # Only enter below 45¢
 
+# Circuit breakers
+MAX_DAILY_TRADES = 3          # Max trades per day (buys + sells)
+MAX_DAILY_LOSS_USD = 3.00     # Halt trading if daily realized loss exceeds this
+BALANCE_FLOOR_USD = 1.00      # Never spend below this USDC balance
+KILL_SWITCH_FILE = os.path.join(STATE_DIR, "KILL_SWITCH")  # Touch this file to halt all trading
+
 # Bot timing
 LOOP_INTERVAL_SEC = 300       # Main loop: check every 5 minutes
 SCAN_INTERVAL_SEC = 1800      # Market scan: every 30 minutes

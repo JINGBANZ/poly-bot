@@ -27,7 +27,7 @@ from .guardrails import check_position
 from .resolver import check_resolution
 from .alerts import write_alert
 from .logger import log
-from .execution import log_trade, get_usdc_balance
+from .execution import log_trade, get_usdc_balance, check_circuit_breakers
 
 running = True
 
@@ -44,6 +44,12 @@ def run_cycle(dry_run=False) -> dict:
     """Run one monitoring cycle. Returns summary dict."""
     log("─" * 50)
     log("🤖 Cycle start")
+
+    # 0. Circuit breaker check
+    can_trade, cb_reason = check_circuit_breakers()
+    if not can_trade:
+        log(f"  🚨 Circuit breaker: {cb_reason} — monitoring only, no trades this cycle")
+        dry_run = True  # Force dry-run mode
 
     # 1. Fetch positions
     raw = get_positions()
