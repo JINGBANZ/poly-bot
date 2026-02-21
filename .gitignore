@@ -14,3 +14,14 @@ state/positions.json
 state/sentiment_cache.json
 state/tracked_wallets.json
 logs/
+
+# OpenClaw workspace files
+.openclaw/
+memory/
+AGENTS.md
+SOUL.md
+USER.md
+IDENTITY.md
+TOOLS.md
+HEARTBEAT.md
+MEMORY.md
