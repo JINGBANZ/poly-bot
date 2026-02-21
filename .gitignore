@@ -25,3 +25,10 @@ IDENTITY.md
 TOOLS.md
 HEARTBEAT.md
 MEMORY.md
+
+# Analysis notes & runtime data
+analysis/
+backtest/
+backtest_script.py
+state/
+scripts/
