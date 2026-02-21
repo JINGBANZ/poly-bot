@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import json
 import signal
 import time
 import sys
@@ -94,6 +95,7 @@ def run_cycle(dry_run=False) -> dict:
     # 3. News scan (every 6th cycle = ~30 min)
     cycle_count = getattr(run_cycle, '_count', 0) + 1
     run_cycle._count = cycle_count
+    findings = []
     if cycle_count % 6 == 1:  # first cycle + every 30 min
         try:
             from .news import scan_news_for_positions
@@ -102,28 +104,73 @@ def run_cycle(dry_run=False) -> dict:
             for f in findings:
                 tweets_summary = " | ".join(t["text"][:80] for t in f["notable_tweets"][:2])
                 log(f"  📰 {f['position'][:30]}: {tweets_summary}")
-                write_alert(f"📰 News for {f['position'][:30]}: {tweets_summary}")
         except Exception as e:
             log(f"  ⚠️ News scan error: {e}")
 
-    # 4. Analyst cycle (every 6th cycle = ~30 min) — build context for LLM
+    # 4. LLM position analysis (every 6th cycle = ~30 min)
     if cycle_count % 6 == 1:
         try:
-            from .analyst import build_context, get_pending_recommendations
-            context = build_context(
-                portfolio.summary(),
-                findings if 'findings' in dir() else [],
-            )
-            # Context is written to file — OpenClaw session picks it up
-            
-            # Check for approved recommendations to execute
-            approved = [r for r in get_pending_recommendations() if r.get("status") == "APPROVED"]
-            for reco in approved:
-                log(f"  ✅ Executing approved reco: {reco['action']} {reco['position']}")
-                write_alert(f"✅ Executing: {reco['action']} {reco['position']}")
-                # TODO: Execute based on reco type
+            from . import llm
+            for pos in portfolio.positions:
+                # Gather news for this position
+                pos_news = []
+                for f in findings:
+                    if pos.title[:15].lower() in f.get("position", "").lower():
+                        pos_news = [t["text"] for t in f.get("notable_tweets", [])]
+                        break
+
+                analysis = llm.analyze_position(
+                    title=pos.title,
+                    entry_price=pos.entry,
+                    current_price=pos.current,
+                    size=pos.size,
+                    news=pos_news if pos_news else None,
+                    resolution_date=getattr(pos, 'end_date', ''),
+                )
+                if analysis:
+                    log(f"  🧠 LLM [{pos.title[:25]}]: {analysis[:120]}")
+                    # Alert on SELL recommendations
+                    if analysis.strip().startswith("SELL"):
+                        write_alert(f"🧠 LLM recommends SELL: {pos.title}\n{analysis}")
+                    elif analysis.strip().startswith("ADD"):
+                        write_alert(f"🧠 LLM recommends ADD: {pos.title}\n{analysis}")
         except Exception as e:
-            log(f"  ⚠️ Analyst error: {e}")
+            log(f"  ⚠️ LLM position analysis error: {e}")
+
+    # 5. LLM market scan (every 12th cycle = ~60 min)
+    if cycle_count % 12 == 1:
+        try:
+            from . import llm
+            from .search import search_markets
+            from .api import get_active_markets
+
+            # Get top markets by volume, filter to value zone
+            raw_markets = get_active_markets(limit=200)
+            candidates = []
+            for m in raw_markets:
+                vol24 = float(m.get("volume24hr", 0) or 0)
+                if vol24 < config.MIN_VOLUME_24H:
+                    continue
+                try:
+                    prices = json.loads(m.get("outcomePrices", "[]"))
+                    yes_price = float(prices[0]) if prices else 0.5
+                except:
+                    yes_price = 0.5
+                cheap = min(yes_price, 1 - yes_price)
+                if config.VALUE_ZONE_MIN <= cheap <= config.VALUE_ZONE_MAX:
+                    candidates.append(m)
+
+            if candidates:
+                analysis = llm.analyze_markets(candidates[:15])
+                if analysis:
+                    log(f"  🧠 LLM market scan:\n{analysis[:500]}")
+                    # Extract TRADE recommendations
+                    for line in analysis.split("\n"):
+                        if "TRADE" in line.upper() and "—" in line:
+                            write_alert(f"🧠 LLM found opportunity:\n{line.strip()}")
+                            log(f"  🎯 {line.strip()}")
+        except Exception as e:
+            log(f"  ⚠️ LLM market scan error: {e}")
 
     # 5. Save state
     portfolio.save()
