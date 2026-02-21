@@ -1,6 +1,0 @@
-{"action": "SELL", "name": "Anthropic YES", "price": 0.582, "shares": 5, "profit": -0.465, "reason": "stop_loss", "timestamp": "2026-02-16T16:46:27.509115+00:00"}
-{"ts":"2026-02-16T18:04:00Z","action":"SELL","name":"FURIA YES (CS2)","shares":5,"price":0.60,"avg_cost":0.46,"profit":0.70,"trigger":"take-profit"}
-{"action": "SELL", "name": "BTC stays below $70k (Feb 17)", "price": 0.948, "shares": 5, "profit": 0.94, "reason": "take_profit", "timestamp": "2026-02-17T11:05:16.548563+00:00"}
-{"action": "SELL", "name": "BTC stays above $68k (Feb 17)", "price": 0.395, "shares": 5, "profit": -1.875, "reason": "stop_loss", "timestamp": "2026-02-17T11:05:17.535703+00:00"}
-{"action": "BUY", "name": "TheMongolz WIN (CS2 vs NaVi)", "token_id": "67441494987401463095060421927810000484221330226867010040681440370354319248832", "price": 0.36, "shares": 8, "cost": 2.88, "edge": 0.317, "strategy": "bookmaker_comparison", "timestamp": "2026-02-17T12:16:13.705907+00:00"}
-{"action": "SELL", "name": "TheMongolz WIN (CS2 vs NaVi)", "price": 0.12, "shares": 8, "profit": -1.92, "reason": "stop_loss", "timestamp": "2026-02-17T13:28:15.698178+00:00"}
