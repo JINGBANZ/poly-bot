@@ -27,6 +27,7 @@ from .guardrails import check_position
 from .resolver import check_resolution
 from .alerts import write_alert
 from .logger import log
+from .execution import log_trade, get_usdc_balance
 
 running = True
 
@@ -79,6 +80,16 @@ def run_cycle(dry_run=False) -> dict:
             log(f"  {gr}")
             emoji = "🔴" if "SL" in gr.action else ("🟢" if "TP" in gr.action else "🟡")
             write_alert(f"{emoji} {gr.detail}")
+            
+            # Check liquidity for SELL
+            from .api import get_book, best_bid
+            book = get_book(pos.token_id)
+            bid_price, bid_depth = best_bid(book)
+            
+            if bid_price < config.MIN_SELL_PRICE or bid_depth < config.MIN_BID_DEPTH_USD:
+                log(f"    🛑 Low liquidity: bid ${bid_price:.2f}, depth ${bid_depth:.2f}. Skipping sell.")
+                continue
+
             if not dry_run:
                 from .api import market_sell
                 sell_amount = pos.size * pos.current  # dollar value
@@ -86,9 +97,20 @@ def run_cycle(dry_run=False) -> dict:
                 if result and "error" not in str(result):
                     log(f"    ✅ Market sell executed: {result}")
                     write_alert(f"✅ SOLD: {pos.title} — {pos.size:.1f} shares for ~${sell_amount:.2f}")
+                    log_trade(
+                        action="SELL",
+                        name=pos.title,
+                        price=bid_price,
+                        shares=pos.size,
+                        profit=pos.pnl,
+                        reason=gr.action,
+                        token_id=pos.token_id
+                    )
                 else:
                     log(f"    ❌ Market sell failed: {result}")
                     write_alert(f"❌ Sell failed for {pos.title}: {result}")
+            else:
+                log(f"    [DRY-RUN] Would market_sell {pos.size:.1f} shares of {pos.title}")
         elif gr.action == "NO_LIQUIDITY":
             log(f"  🛑 {gr.position.title}: {gr.detail}")
 
@@ -132,6 +154,26 @@ def run_cycle(dry_run=False) -> dict:
                     # Alert on SELL recommendations
                     if analysis.strip().startswith("SELL"):
                         write_alert(f"🧠 LLM recommends SELL: {pos.title}\n{analysis}")
+                        
+                        # Check liquidity
+                        from .api import get_book, best_bid
+                        book = get_book(pos.token_id)
+                        bid_price, bid_depth = best_bid(book)
+                        
+                        if bid_price >= config.MIN_SELL_PRICE and bid_depth >= config.MIN_BID_DEPTH_USD:
+                            if not dry_run:
+                                from .api import market_sell
+                                sell_amount = pos.size * pos.current
+                                result = market_sell(pos.token_id, sell_amount)
+                                if result and "error" not in str(result):
+                                    log(f"    ✅ LLM Market sell executed: {result}")
+                                    write_alert(f"✅ LLM SOLD: {pos.title} for ~${sell_amount:.2f}")
+                                    log_trade("SELL", pos.title, bid_price, pos.size, profit=pos.pnl, reason="LLM_SELL", thesis=analysis, token_id=pos.token_id)
+                            else:
+                                log(f"    [DRY-RUN] Would LLM market_sell {pos.title}")
+                        else:
+                            log(f"    🛑 LLM SELL skipped: Low liquidity (bid ${bid_price:.2f}, depth ${bid_depth:.2f})")
+
                     elif analysis.strip().startswith("ADD"):
                         write_alert(f"🧠 LLM recommends ADD: {pos.title}\n{analysis}")
         except Exception as e:
@@ -167,8 +209,77 @@ def run_cycle(dry_run=False) -> dict:
                     # Extract TRADE recommendations
                     for line in analysis.split("\n"):
                         if "TRADE" in line.upper() and "—" in line:
+                            # Parse recommendation: "[#]. TRADE — [reason]"
+                            try:
+                                parts = line.split("TRADE —", 1)
+                                idx_str = parts[0].strip().strip("[]").strip(".")
+                                idx = int(idx_str) - 1
+                                market = candidates[idx]
+                                reason = parts[1].strip()
+                                
+                                log(f"  🎯 LLM trade target: {market.get('question')}")
+                                
+                                # 1. Deep research
+                                research = llm.research_market(market.get('question'), market.get('description', ''))
+                                log(f"  🔍 Research: {research[:100]}...")
+                                
+                                # 2. Generate thesis
+                                prices = json.loads(market.get("outcomePrices", "[]"))
+                                yes_price = float(prices[0]) if prices else 0.5
+                                side = "YES" if yes_price < 0.5 else "NO"
+                                entry_price = yes_price if side == "YES" else (1 - yes_price)
+                                
+                                thesis = llm.generate_thesis(market.get('question'), side, entry_price, research)
+                                log(f"  📜 Thesis: {thesis}")
+                                
+                                if thesis and not thesis.startswith("NO_THESIS"):
+                                    # 3. Check Guardrails
+                                    vol24 = float(market.get("volume24hr", 0) or 0)
+                                    from .guardrails import validate_entry
+                                    valid, msg = validate_entry(entry_price, vol24)
+                                    
+                                    if valid:
+                                        # Check max position and cash
+                                        usdc_balance = get_usdc_balance()
+                                        log(f"  💰 Balance: ${usdc_balance:.2f}")
+                                        
+                                        # Max position $2 (config)
+                                        buy_amount = min(config.MAX_POSITION_USD, usdc_balance)
+                                        
+                                        if buy_amount >= 1.0: # Minimum $1 trade
+                                            # Check liquidity (ask depth)
+                                            from .api import get_book, best_ask
+                                            token_id = market.get("clobTokenIds", [""])[0] if side == "YES" else market.get("clobTokenIds", ["", ""])[1]
+                                            
+                                            if token_id:
+                                                book = get_book(token_id)
+                                                ask_price, ask_depth = best_ask(book)
+                                                
+                                                if ask_depth >= buy_amount:
+                                                    if not dry_run:
+                                                        from .api import market_buy
+                                                        result = market_buy(token_id, buy_amount)
+                                                        if result and "error" not in str(result):
+                                                            log(f"    ✅ Market buy executed: {result}")
+                                                            write_alert(f"🚀 ENTERED: {market.get('question')}\nSide: {side} @ {entry_price:.2f}\nAmt: ${buy_amount:.2f}\n\n{thesis}")
+                                                            log_trade("BUY", market.get('question'), ask_price, buy_amount/ask_price, amount_usd=buy_amount, reason="LLM_TRADE", thesis=thesis, token_id=token_id)
+                                                        else:
+                                                            log(f"    ❌ Market buy failed: {result}")
+                                                    else:
+                                                        log(f"    [DRY-RUN] Would market_buy ${buy_amount:.2f} of {market.get('question')}")
+                                                else:
+                                                    log(f"    🛑 Buy skipped: Low ask depth ${ask_depth:.2f}")
+                                        else:
+                                            log(f"    🛑 Buy skipped: Insufficient balance (${usdc_balance:.2f})")
+                                    else:
+                                        log(f"    🛑 Guardrail failed: {msg}")
+                                else:
+                                    log(f"    🛑 No valid thesis: {thesis}")
+                                    
+                            except Exception as te:
+                                log(f"    ⚠️ Error processing trade recommendation: {te}")
+
                             write_alert(f"🧠 LLM found opportunity:\n{line.strip()}")
-                            log(f"  🎯 {line.strip()}")
         except Exception as e:
             log(f"  ⚠️ LLM market scan error: {e}")
 
