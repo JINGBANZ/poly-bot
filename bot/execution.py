@@ -32,16 +32,54 @@ def log_trade(action: str, name: str, price: float, shares: float,
 
 
 def get_usdc_balance() -> float:
-    """Fetch USDC balance for the wallet."""
+    """Estimate free USDC in Polymarket exchange.
+    
+    There's no direct API for exchange cash balance. We compute it from:
+    deposit - total_buys + total_sells + redemptions
+    
+    Known deposit: $20.00 (verified on-chain, hardcoded — update if more deposited).
+    Redemptions are tracked in state/redemptions.json.
+    """
+    import requests
+    from . import config
+    
+    DEPOSIT = 20.00  # Total deposited — UPDATE IF MORE IS ADDED
+    REDEMPTIONS_FILE = os.path.join(config.STATE_DIR, "redemptions.json")
+    
     try:
-        from .api import get_clob_client
-        client = get_clob_client()
-        if client:
-            resp = client.get_collateral_balance()
-            return float(resp.get("balance", 0))
+        # Get all trades
+        r = requests.get(
+            f"{config.DATA_API}/trades",
+            params={"user": config.WALLET, "limit": 200},
+            timeout=15,
+        )
+        trades = r.json() if r.status_code == 200 else []
+        
+        total_buys = 0.0
+        total_sells = 0.0
+        for t in trades:
+            size = float(t.get("size", 0))
+            price = float(t.get("price", 0))
+            if t.get("side") == "BUY":
+                total_buys += size * price
+            else:
+                total_sells += size * price
+        
+        # Load tracked redemptions
+        redemptions = 0.0
+        if os.path.exists(REDEMPTIONS_FILE):
+            try:
+                with open(REDEMPTIONS_FILE) as f:
+                    data = json.load(f)
+                redemptions = float(data.get("total", 0))
+            except:
+                pass
+        
+        balance = DEPOSIT - total_buys + total_sells + redemptions
+        return max(balance, 0.0)
     except Exception as e:
-        log(f"⚠️ Error fetching USDC balance: {e}")
-    return 0.0
+        log(f"⚠️ Error computing USDC balance: {e}")
+        return 0.0
 
 
 def is_kill_switch_on() -> bool:
