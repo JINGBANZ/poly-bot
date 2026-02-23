@@ -1,11 +1,9 @@
-"""LLM module — Gemini Flash integration for market analysis.
+"""LLM module — Claude (subscription) integration for market analysis.
 
-Uses Google's Gemini Flash (free tier) for:
+Uses Claude Sonnet via OAuth token (Claude subscription) for:
 1. Market scanning — filter candidates for verifiable edge
 2. Position analysis — hold/sell decisions based on news + price
 3. Trade thesis — generate required 3-sentence thesis before entry
-
-All calls go through Gemini's REST API. No SDK needed.
 """
 
 import json
@@ -18,39 +16,39 @@ from .logger import log
 
 # ── Config ──────────────────────────────────────────────────────────
 
-def _get_api_key() -> str:
-    """Read Gemini API key from OpenClaw config."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if key:
-        return key
-    # Fall back to reading from OpenClaw config
+_TOKEN_PATH = "/home/ubuntu/.openclaw/.bot-anthropic-token"
+
+def _get_token() -> str:
+    """Read OAuth token from file or env."""
+    token = os.environ.get("ANTHROPIC_OAUTH_TOKEN", "")
+    if token:
+        return token
     try:
-        with open("/home/ubuntu/.openclaw/openclaw.json") as f:
-            cfg = json.load(f)
-        return cfg["models"]["providers"]["google-gemini"]["apiKey"]
+        with open(_TOKEN_PATH) as f:
+            return f.read().strip()
     except Exception:
         return ""
 
-MODEL = "gemini-2.0-flash"  # Free tier, fast, good enough for analysis
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+MODEL = "claude-sonnet-4-20250514"
+API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
 TIMEOUT = 30
 
-# Rate limiting — free tier is 15 RPM
+# Rate limiting
 _last_call_ts = 0.0
-_MIN_INTERVAL = 4.5  # seconds between calls (~13 RPM, safe under 15)
+_MIN_INTERVAL = 2.0  # seconds between calls
 
 
 # ── Core LLM Call ───────────────────────────────────────────────────
 
 def call(prompt: str, system: str = "", temperature: float = 0.3,
          max_tokens: int = 2048) -> str | None:
-    """Call Gemini Flash with a prompt. Returns response text or None on failure."""
+    """Call Claude with OAuth token. Returns response text or None on failure."""
     global _last_call_ts
 
-    api_key = _get_api_key()
-    if not api_key:
-        log("❌ LLM: No Gemini API key found")
+    token = _get_token()
+    if not token:
+        log("❌ LLM: No OAuth token found")
         return None
 
     # Rate limit
@@ -59,39 +57,44 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
     if wait > 0:
         time.sleep(wait)
 
-    url = API_URL.format(model=MODEL) + f"?key={api_key}"
-
-    # Build request
-    contents = []
-    if system:
-        contents.append({"role": "user", "parts": [{"text": f"[SYSTEM]\n{system}"}]})
-        contents.append({"role": "model", "parts": [{"text": "Understood. I'll follow these instructions."}]})
-    contents.append({"role": "user", "parts": [{"text": prompt}]})
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        "user-agent": "claude-cli/2.1.2 (external, cli)",
+        "x-app": "cli",
+        "content-type": "application/json",
+    }
 
     body = {
-        "contents": contents,
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-        },
+        "model": MODEL,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": [{"role": "user", "content": prompt}],
     }
+    if system:
+        body["system"] = system
 
     for attempt in range(MAX_RETRIES + 1):
         try:
             _last_call_ts = time.time()
-            r = requests.post(url, json=body, timeout=TIMEOUT)
+            r = requests.post(API_URL, json=body, headers=headers, timeout=TIMEOUT)
 
             if r.status_code == 429:
-                log(f"⚠️ LLM: Rate limited, waiting 60s (attempt {attempt+1})")
+                log(f"⚠️ LLM: Rate limited, waiting 60s")
                 time.sleep(60)
                 continue
+
+            if r.status_code == 401:
+                log(f"❌ LLM: Auth failed — token may be expired")
+                return None
 
             if r.status_code != 200:
                 log(f"❌ LLM: HTTP {r.status_code}: {r.text[:200]}")
                 return None
 
             data = r.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = data["content"][0]["text"]
             return text.strip()
 
         except Exception as e:
@@ -265,8 +268,7 @@ Be rigorous. Cite sources. If uncertain, say so."""
 
 if __name__ == "__main__":
     import sys
-    logging_setup = True
-    
+
     print("Testing LLM module...")
     result = call("Say 'LLM module working' and nothing else.")
     if result:
