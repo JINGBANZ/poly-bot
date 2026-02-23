@@ -29,7 +29,7 @@ def _get_token() -> str:
     except Exception:
         return ""
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
 TIMEOUT = 30
