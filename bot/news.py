@@ -28,7 +28,9 @@ def search_tweets(query: str, max_results: int = 10) -> list[dict]:
         if r.status_code == 200:
             return r.json().get("data", [])
         else:
-            log(f"Twitter API error {r.status_code}: {r.text[:100]}")
+            if not hasattr(search_tweets, '_err_logged'):
+                log(f"Twitter API error {r.status_code}: {r.text[:80]}")
+                search_tweets._err_logged = True
             return []
     except Exception as e:
         log(f"Twitter search failed: {e}")
