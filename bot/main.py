@@ -268,14 +268,22 @@ def run_cycle(dry_run=False) -> dict:
                 else:
                     # Count recommendations
                     trades = [l for l in analysis.split("\n") if "TRADE" in l.upper().replace("*","") and "SKIP" not in l.upper() and "NO" not in l.upper().split("TRADE")[0]]
+                    leans = [l for l in analysis.split("\n") if "LEAN" in l.upper().replace("*","") and "SKIP" not in l.upper()]
+                    researches = [l for l in analysis.split("\n") if "RESEARCH" in l.upper().replace("*","") and "SKIP" not in l.upper()]
                     skips = [l for l in analysis.split("\n") if "SKIP" in l.upper()]
-                    log(f"  🔍 Scanned {len(candidates)} markets: {len(trades)} TRADE, {len(skips)} SKIP")
+                    log(f"  🔍 Scanned {len(candidates)} markets: {len(trades)} TRADE, {len(leans)} LEAN, {len(researches)} RESEARCH, {len(skips)} SKIP")
                     for t in trades:
                         log(f"  💡 {t.strip()[:150]}")
+                    for l in leans:
+                        log(f"  🤔 {l.strip()[:150]}")
+                    for r in researches[:3]:  # Cap research logging
+                        log(f"  🔬 {r.strip()[:150]}")
 
                     for line in analysis.split("\n"):
                         line_upper = line.upper().replace("*", "")
-                        if "TRADE" not in line_upper:
+                        is_trade = "TRADE" in line_upper
+                        is_lean = "LEAN" in line_upper
+                        if not is_trade and not is_lean:
                             continue
                         # Skip lines that say SKIP or NO_TRADE
                         if "SKIP" in line_upper or "NO_TRADE" in line_upper or "NO TRADE" in line_upper:
@@ -283,9 +291,9 @@ def run_cycle(dry_run=False) -> dict:
                         try:
                             # Strip markdown formatting, normalize dashes
                             clean = line.replace("*", "").replace("–", "—").replace("-—", "—")
-                            # Split on TRADE + any separator
+                            # Split on TRADE or LEAN + any separator
                             import re
-                            parts = re.split(r'TRADE\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
+                            parts = re.split(r'(?:TRADE|LEAN)\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
                             if len(parts) < 2:
                                 continue
                             idx_str = parts[0].strip().strip("[]").strip(".").strip()
@@ -311,6 +319,14 @@ def run_cycle(dry_run=False) -> dict:
                             thesis = llm.generate_thesis(market.get('question'), side, entry_price, research)
                             if not thesis or thesis.startswith("NO_THESIS"):
                                 log(f"  🛑 No valid thesis")
+                                if is_lean:
+                                    write_alert(f"🤔 LEAN (no thesis): {market.get('question')}\n{reason}")
+                                continue
+                            
+                            # LEAN markets: alert but don't auto-trade
+                            if is_lean:
+                                log(f"  🤔 LEAN with thesis: {thesis[:150]}")
+                                write_alert(f"🤔 LEAN opportunity:\n{market.get('question')}\n{side} @ {entry_price:.2f}\n\n{thesis}")
                                 continue
 
                             log(f"  📜 Thesis: {thesis[:150]}")
