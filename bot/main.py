@@ -35,6 +35,10 @@ running = True
 _last_state = {}  # token_id -> {"action": str, "detail": str, "logged_at": float}
 _DEDUP_INTERVAL = 1800  # re-log same state only every 30 min
 
+# LLM noise reduction — track last-analyzed price per position
+_last_analyzed_price = {}  # token_id -> float (price when last analyzed)
+_LLM_PRICE_CHANGE_THRESHOLD = 0.05  # Only re-analyze if price moved >5%
+
 def _state_changed(token_id: str, action: str, detail: str) -> bool:
     """Return True if this is new or changed since last log."""
     now = time.time()
@@ -99,6 +103,14 @@ def run_cycle(dry_run=False) -> dict:
             else:
                 log(f"❓ RESOLVED: {pos.title} — winner unknown")
             results["RESOLVED"] = results.get("RESOLVED", 0) + 1
+
+            # Auto post-mortem
+            try:
+                from .postmortem import generate_postmortem
+                generate_postmortem(pos, won=res.won, winner=res.winner)
+            except Exception as e:
+                log(f"  ⚠️ Post-mortem failed: {e}")
+
             continue
 
         # Guardrail check
@@ -147,11 +159,18 @@ def run_cycle(dry_run=False) -> dict:
         except Exception as e:
             log(f"  ⚠️ News scan: {e}")
 
-    # 4. LLM position analysis (every 6th cycle = ~30 min)
+    # 4. LLM position analysis (every 6th cycle = ~30 min, with noise reduction)
     if verbose:
         try:
             from . import llm
             for pos in portfolio.positions:
+                # Noise reduction: skip LLM if price hasn't moved >5% since last analysis
+                last_price = _last_analyzed_price.get(pos.token_id)
+                if last_price is not None:
+                    price_change = abs(pos.current - last_price) / last_price if last_price > 0 else 1.0
+                    if price_change < _LLM_PRICE_CHANGE_THRESHOLD:
+                        continue  # Skip — nothing meaningful changed
+
                 pos_news = []
                 for f in findings:
                     if pos.title[:15].lower() in f.get("position", "").lower():
@@ -166,6 +185,9 @@ def run_cycle(dry_run=False) -> dict:
                 )
                 if not analysis:
                     continue
+
+                # Track analyzed price for noise reduction
+                _last_analyzed_price[pos.token_id] = pos.current
 
                 log(f"  🧠 [{pos.title[:25]}]: {analysis[:120]}")
 
@@ -199,6 +221,30 @@ def run_cycle(dry_run=False) -> dict:
             from .api import get_active_markets
 
             raw_markets = get_active_markets(limit=200)
+
+            # Category-based scanning — find markets the top-200 might miss
+            try:
+                from .search import search_markets as _search_markets
+                seen_ids = {m.get("conditionId") for m in raw_markets}
+                for category in ["crypto", "politics", "earnings", "economics", "tech", "AI"]:
+                    cat_markets = _search_markets(category, max_pages=2, max_results=20)
+                    for cm in cat_markets:
+                        if cm.get("conditionId") not in seen_ids:
+                            raw_markets.append(cm)
+                            seen_ids.add(cm.get("conditionId"))
+                log(f"  🔍 Category scan added {len(raw_markets) - 200} extra markets") if len(raw_markets) > 200 else None
+            except Exception as e:
+                log(f"  ⚠️ Category scan: {e}")
+
+            # Earnings calendar scan
+            try:
+                from .earnings import scan_earnings_markets, format_earnings_alert
+                earnings_results = scan_earnings_markets()
+                for er in earnings_results[:5]:
+                    log(f"  📅 {format_earnings_alert(er)}")
+            except Exception as e:
+                log(f"  ⚠️ Earnings scan: {e}")
+
             candidates = []
             for m in raw_markets:
                 vol24 = float(m.get("volume24hr", 0) or 0)
