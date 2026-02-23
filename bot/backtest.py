@@ -131,7 +131,7 @@ def simulate_trades(markets: list) -> list:
             "question": question,
             "side": side,
             "entry_price": entry_price,
-            "outcome": outcome,
+            "outcome": "YES" if yes_won else "NO",
             "won": won,
             "pnl_per_dollar": pnl,
             "pnl_pct": pnl_pct,

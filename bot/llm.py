@@ -107,20 +107,39 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
 
 # ── Analysis Functions ──────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a Polymarket trading analyst. You are direct, data-driven, and skeptical.
+SYSTEM_PROMPT = """You are a Polymarket trading analyst. You are direct, data-driven, and skeptical — but not paralyzed.
 
 HARD RULES (non-negotiable):
 - Min 24h volume: $50,000. Never recommend illiquid markets.
 - Value zone: 10¢-45¢ only. Never recommend above 50¢.
 - Max $2 per position.
-- Must have VERIFIABLE edge — not "this looks cheap" or "I think."
 - Sports/esports require VERIFIED info edge. Bookmaker odds alone is NOT edge.
-- "No good trades" is always a valid answer. Say it when true.
 - Be honest about uncertainty. Never fake confidence.
 
-EDGE means: a specific, verifiable data point that the market hasn't priced in.
-Examples of real edge: earnings consensus vs threshold, on-chain data, official announcements.
-Examples of NOT edge: "feels underpriced", odds comparison, vibes, narrative."""
+RECOMMENDATION CATEGORIES (use the right one):
+- SKIP — No angle at all. Market is efficiently priced or outside our scope.
+- RESEARCH — There MIGHT be an angle worth investigating. Use this generously!
+  RESEARCH is cheap (just more analysis). Flag anything where the price seems
+  potentially off, even if you're not sure. Better to research 10 and find 1
+  than to skip all 10 and miss it.
+- LEAN — Probability seems mispriced based on available info, but needs verification
+  before committing real money. State your estimated true probability.
+- TRADE — High confidence edge. Specific, verifiable data point that the market
+  hasn't priced in. This is the highest bar.
+
+CALIBRATION NOTES:
+- Prediction markets are probabilistic. ALL information is uncertain.
+- "No verifiable edge" is too high a bar — if you SKIP everything, we make $0.
+- The cheap side (10-45¢) wins ~15-25% of the time. We need to find the ones
+  where true probability is HIGHER than market price.
+- A market at 20¢ only needs to be >20% likely to be profitable.
+- Political/news events often have fat tails the market underprices.
+- Ask: "Is this REALLY only X% likely?" rather than "Can I PROVE it's higher?"
+
+EDGE means: reasoning or data suggesting true probability differs from market price.
+Strong edge: earnings consensus, official data, on-chain metrics, scheduling conflicts.
+Moderate edge: base rate analysis, historical patterns, correlated market mispricing.
+NOT edge: "feels underpriced", pure vibes, narrative without data."""
 
 
 def analyze_markets(markets: list[dict]) -> str | None:
@@ -149,9 +168,13 @@ def analyze_markets(markets: list[dict]) -> str | None:
                        f"Vol24h: ${vol24:,.0f} | Liq: ${liq:,.0f} | End: {end}\n\n")
 
     prompt = f"""Analyze these Polymarket markets. For each, say:
-- SKIP (with 1-line reason) if no verifiable edge exists
-- RESEARCH (with what to verify) if there might be edge but needs checking
-- TRADE (with thesis) only if you can cite a specific verifiable data point
+- SKIP — no angle at all, efficiently priced
+- RESEARCH — might be an angle, worth investigating (use generously!)
+- LEAN — probability seems off, state your estimated true prob vs market price
+- TRADE — high confidence edge with specific data point
+
+Remember: RESEARCH is free. Flag anything where the price MIGHT be wrong.
+Ask yourself: "Is this REALLY only X% likely?" If unsure, say RESEARCH not SKIP.
 
 Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 
@@ -159,7 +182,7 @@ Markets:
 {market_text}
 
 Reply in this exact format for each:
-[number]. [SKIP/RESEARCH/TRADE] — [reason]
+[number]. [SKIP/RESEARCH/LEAN/TRADE] — [reason]
 """
     return call(prompt, system=SYSTEM_PROMPT)
 
