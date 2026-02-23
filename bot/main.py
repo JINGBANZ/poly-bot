@@ -169,7 +169,7 @@ def run_cycle(dry_run=False) -> dict:
 
                 log(f"  🧠 [{pos.title[:25]}]: {analysis[:120]}")
 
-                if analysis.strip().startswith("SELL"):
+                if analysis.strip().lstrip("*").startswith("SELL"):
                     from .api import get_book, best_bid
                     book = get_book(pos.token_id)
                     bid_price, bid_depth = best_bid(book)
@@ -187,7 +187,7 @@ def run_cycle(dry_run=False) -> dict:
                     else:
                         log(f"  🛑 LLM SELL skipped: no liquidity (bid ${bid_price:.2f})")
 
-                elif analysis.strip().startswith("ADD"):
+                elif analysis.strip().lstrip("*").startswith("ADD"):
                     write_alert(f"🧠 LLM ADD: {pos.title}\n{analysis}")
         except Exception as e:
             log(f"  ⚠️ LLM analysis: {e}")
@@ -221,15 +221,25 @@ def run_cycle(dry_run=False) -> dict:
                     log("  ⚠️ LLM market scan returned nothing")
                 else:
                     # Count recommendations
-                    trades = [l for l in analysis.split("\n") if "TRADE" in l.upper()]
+                    trades = [l for l in analysis.split("\n") if "TRADE" in l.upper().replace("*","") and "SKIP" not in l.upper() and "NO" not in l.upper().split("TRADE")[0]]
                     skips = [l for l in analysis.split("\n") if "SKIP" in l.upper()]
                     log(f"  🔍 Scanned {len(candidates)} markets: {len(trades)} TRADE, {len(skips)} SKIP")
+                    for t in trades:
+                        log(f"  💡 {t.strip()[:150]}")
 
                     for line in analysis.split("\n"):
-                        if "TRADE" not in line.upper() or "—" not in line:
+                        line_upper = line.upper().replace("*", "")
+                        if "TRADE" not in line_upper:
+                            continue
+                        # Skip lines that say SKIP or NO_TRADE
+                        if "SKIP" in line_upper or "NO_TRADE" in line_upper or "NO TRADE" in line_upper:
                             continue
                         try:
-                            parts = line.split("TRADE —", 1) if "TRADE —" in line else line.split("TRADE—", 1)
+                            # Strip markdown formatting, normalize dashes
+                            clean = line.replace("*", "").replace("–", "—").replace("-—", "—")
+                            # Split on TRADE + any separator
+                            import re
+                            parts = re.split(r'TRADE\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
                             if len(parts) < 2:
                                 continue
                             idx_str = parts[0].strip().strip("[]").strip(".").strip()
