@@ -16,9 +16,11 @@ Usage:
 
 import argparse
 import json
+import os
 import signal
 import time
 import sys
+from datetime import datetime, timezone
 
 from . import config
 from .api import get_positions
@@ -60,6 +62,7 @@ signal.signal(signal.SIGINT, handle_signal)
 
 def run_cycle(dry_run=False) -> dict:
     """Run one monitoring cycle. Returns summary dict."""
+    _cycle_start = time.time()
     cycle_count = getattr(run_cycle, '_count', 0) + 1
     run_cycle._count = cycle_count
 
@@ -405,6 +408,27 @@ def run_cycle(dry_run=False) -> dict:
     # 6. Save state
     portfolio.save()
 
+    # 7. Save last cycle info for status command
+    try:
+        import time as _time
+        cycle_end = _time.time()
+        cycle_data = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "results": results,
+            "positions": len(portfolio.positions),
+            "duration_sec": cycle_end - _cycle_start if '_cycle_start' in dir() else 0,
+            "bot_start_time": getattr(main, '_start_time', None),
+        }
+        try:
+            cycle_data["usdc_balance"] = get_usdc_balance()
+        except:
+            pass
+        os.makedirs(config.STATE_DIR, exist_ok=True)
+        with open(os.path.join(config.STATE_DIR, "last_cycle.json"), "w") as f:
+            json.dump(cycle_data, f)
+    except Exception:
+        pass
+
     if verbose:
         log(f"📋 Results: {results}")
         log("─" * 50)
@@ -418,6 +442,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Don't execute trades")
     args = parser.parse_args()
 
+    main._start_time = datetime.now(timezone.utc).isoformat()
     log("=" * 50)
     log(f"🚀 Bot starting ({'once' if args.once else 'daemon'})")
     log(f"   Interval: {config.LOOP_INTERVAL_SEC}s | SL: {config.STOP_LOSS_PCT:.0%} | TP: {config.TAKE_PROFIT_PCT:.0%} | MinVol: ${config.MIN_VOLUME_24H:,}")
