@@ -2,6 +2,19 @@
 
 Automated trading bot for Polymarket prediction markets. Runs as a systemd daemon on EC2 (t4g.small, eu-west-1).
 
+## Testing
+
+```bash
+# Run the full test suite
+source ~/workspace/polymarket-venv/bin/activate
+python3 -m pytest tests/ -v
+
+# Or use the helper script
+./scripts/run_tests.sh
+```
+
+93 tests covering: config sanity, guardrails (stop-loss/take-profit/entry validation), execution (trade logging, circuit breakers), portfolio (P&L, parsing), alerts (dedup, severity), research (adverse selection, verdict parsing), backtest (simulation math), and integration (full dry-run cycle). All external dependencies are mocked.
+
 ## Quick Start
 
 ```bash
