@@ -28,7 +28,7 @@ MIN_BID_DEPTH_USD = 5.0       # Need $5+ of bids to sell into
 MIN_VOLUME_24H = 50_000       # HARD RULE: Never enter <$50K 24h vol
 MAX_POSITION_USD = 2.00       # Max $2 per new position
 VALUE_ZONE_MIN = 0.10         # Only enter above 10¢
-VALUE_ZONE_MAX = 0.45         # Only enter below 45¢
+VALUE_ZONE_MAX = 0.25         # Only enter below 25¢ (Phase 63: backtest showed 24.2% YES resolution rate across 1498 markets; positive EV only below 25¢)
 
 # Orderbook / limit orders
 MAX_SPREAD_PCT = 0.10         # Reject trades with spread > 10%
