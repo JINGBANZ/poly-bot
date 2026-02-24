@@ -506,6 +506,44 @@ def run_cycle(dry_run=False) -> dict:
         except Exception as e:
             log(f"  ⚠️ Market scan: {e}")
 
+    # 5b. Deep value scan (every 12th cycle, same as market scan)
+    if cycle_count % 12 == 1:
+        try:
+            from .deep_scanner import scan_deep_value, format_candidate_summary
+            from .research import research_opportunity
+
+            deep_candidates = scan_deep_value()
+
+            for c in deep_candidates[:5]:  # Research top 5
+                m = c["market"]
+                side = c["side"]
+                price = c["price"]
+                catalyst = c["catalyst"]
+
+                log(f"  💎 Deep value research: {m.get('question', '?')[:60]} ({side} @ {price:.0%})")
+
+                # Route through existing research pipeline
+                try:
+                    research_result = research_opportunity(
+                        market=m, side=side, entry_price=price,
+                        scan_reason=f"Deep value candidate (score={c['score']:.0f}, catalyst={catalyst.get('catalyst_type', 'none')})"
+                    )
+                    verdict = research_result["verdict"]
+                    summary = format_candidate_summary(c)
+
+                    if verdict == "TRADE":
+                        log(f"  💎✅ Deep value TRADE: {research_result['thesis'][:150]}")
+                        write_alert(f"💎 DEEP VALUE OPPORTUNITY:\n{summary}\n\nResearch: {research_result['thesis'][:300]}")
+                    elif verdict == "PASS":
+                        log(f"  💎❌ Deep value PASS: {research_result['reason'][:100]}")
+                    else:
+                        log(f"  💎❓ Deep value {verdict}: {research_result['reason'][:100]}")
+                except Exception as re_err:
+                    log(f"  ⚠️ Deep value research error: {re_err}")
+
+        except Exception as e:
+            log(f"  ⚠️ Deep value scan: {e}")
+
     # 6. Save state
     portfolio.save()
 
