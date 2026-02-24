@@ -149,12 +149,9 @@ def place_limit_sell(token_id: str, size: float, price: float) -> dict | None:
         return None
     try:
         from py_clob_client.order_builder.constants import SELL
-        order = client.create_and_post_order({
-            "token_id": token_id,
-            "price": price,
-            "size": size,
-            "side": SELL,
-        })
+        from py_clob_client.clob_types import OrderArgs
+        order_args = OrderArgs(token_id=token_id, price=price, size=size, side=SELL)
+        order = client.create_and_post_order(order_args)
         return order
     except Exception as e:
         return {"error": str(e)}
@@ -166,12 +163,9 @@ def place_limit_buy(token_id: str, size: float, price: float) -> dict | None:
         return None
     try:
         from py_clob_client.order_builder.constants import BUY
-        order = client.create_and_post_order({
-            "token_id": token_id,
-            "price": price,
-            "size": size,
-            "side": BUY,
-        })
+        from py_clob_client.clob_types import OrderArgs
+        order_args = OrderArgs(token_id=token_id, price=price, size=size, side=BUY)
+        order = client.create_and_post_order(order_args)
         return order
     except Exception as e:
         return {"error": str(e)}
