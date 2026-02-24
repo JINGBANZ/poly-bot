@@ -83,7 +83,7 @@ def _try_limit_sell(pos, book: dict, reason: str = ""):
         return
 
     result = place_limit_sell(pos.token_id, pos.size, price)
-    if result and "error" not in str(result):
+    if result and (result.get("success") or result.get("orderID")) and "error" not in result:
         order_id = result.get("orderID", result.get("id", str(result)))
         track_order(
             order_id=order_id, token_id=pos.token_id,
