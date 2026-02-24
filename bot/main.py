@@ -283,7 +283,8 @@ def run_cycle(dry_run=False) -> dict:
                         line_upper = line.upper().replace("*", "")
                         is_trade = "TRADE" in line_upper
                         is_lean = "LEAN" in line_upper
-                        if not is_trade and not is_lean:
+                        is_research = "RESEARCH" in line_upper and not is_trade and not is_lean
+                        if not is_trade and not is_lean and not is_research:
                             continue
                         # Skip lines that say SKIP or NO_TRADE
                         if "SKIP" in line_upper or "NO_TRADE" in line_upper or "NO TRADE" in line_upper:
@@ -291,9 +292,9 @@ def run_cycle(dry_run=False) -> dict:
                         try:
                             # Strip markdown formatting, normalize dashes
                             clean = line.replace("*", "").replace("–", "—").replace("-—", "—")
-                            # Split on TRADE or LEAN + any separator
+                            # Split on TRADE, LEAN, or RESEARCH + any separator
                             import re
-                            parts = re.split(r'(?:TRADE|LEAN)\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
+                            parts = re.split(r'(?:TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
                             if len(parts) < 2:
                                 continue
                             idx_str = parts[0].strip().strip("[]").strip(".").strip()
@@ -303,31 +304,55 @@ def run_cycle(dry_run=False) -> dict:
                             market = candidates[idx]
                             reason = parts[1].strip()
 
-                            log(f"  🎯 Target: {market.get('question', '?')[:60]}")
-
-                            # Deep research
-                            research = llm.research_market(market.get('question'), market.get('description', ''))
-                            if research:
-                                log(f"  🔍 Research done ({len(research)} chars)")
-
-                            # Thesis
+                            # Determine side and price
                             prices = json.loads(market.get("outcomePrices", "[]"))
                             yes_price = float(prices[0]) if prices else 0.5
                             side = "YES" if yes_price < 0.5 else "NO"
                             entry_price = yes_price if side == "YES" else (1 - yes_price)
 
-                            thesis = llm.generate_thesis(market.get('question'), side, entry_price, research)
-                            if not thesis or thesis.startswith("NO_THESIS"):
-                                log(f"  🛑 No valid thesis")
-                                if is_lean:
-                                    write_alert(f"🤔 LEAN (no thesis): {market.get('question')}\n{reason}")
-                                continue
-                            
-                            # LEAN markets: alert but don't auto-trade
+                            log(f"  🎯 Target: {market.get('question', '?')[:60]} ({side} @ {entry_price:.0%})")
+
+                            # ── Research Pipeline (for LEAN, RESEARCH, and TRADE) ──
+                            from .research import research_opportunity
+                            research_result = research_opportunity(
+                                market=market, side=side, entry_price=entry_price,
+                                scan_reason=reason
+                            )
+
+                            verdict = research_result["verdict"]
+
+                            # RESEARCH markets: only proceed if research says TRADE
+                            if is_research:
+                                if verdict != "TRADE":
+                                    log(f"  🔬 RESEARCH → {verdict}: {research_result['reason'][:100]}")
+                                    continue
+                                else:
+                                    log(f"  🔬 RESEARCH → TRADE: {research_result['thesis'][:100]}")
+                                    # Promote to trade flow below
+
+                            # LEAN markets: research, alert with findings, don't auto-trade
                             if is_lean:
-                                log(f"  🤔 LEAN with thesis: {thesis[:150]}")
-                                write_alert(f"🤔 LEAN opportunity:\n{market.get('question')}\n{side} @ {entry_price:.2f}\n\n{thesis}")
+                                if verdict == "TRADE":
+                                    log(f"  🤔 LEAN → TRADE: {research_result['thesis'][:150]}")
+                                    write_alert(f"🤔 LEAN → TRADE (research verified):\n{market.get('question')}\n{side} @ {entry_price:.2f}\n\n{research_result['thesis']}")
+                                else:
+                                    log(f"  🤔 LEAN → {verdict}: {research_result['reason'][:100]}")
+                                    write_alert(f"🤔 LEAN → {verdict}:\n{market.get('question')}\n{research_result['reason'][:200]}")
                                 continue
+
+                            # TRADE markets: verify with research
+                            if is_trade and verdict != "TRADE":
+                                log(f"  🛑 TRADE rejected by research: {research_result['reason'][:100]}")
+                                write_alert(f"🛑 TRADE rejected by research:\n{market.get('question')}\n{research_result['reason'][:200]}")
+                                continue
+
+                            thesis = research_result["thesis"]
+                            if not thesis:
+                                thesis_gen = llm.generate_thesis(market.get('question'), side, entry_price, research_result.get("research_summary", ""))
+                                if not thesis_gen or thesis_gen.startswith("NO_THESIS"):
+                                    log(f"  🛑 No valid thesis after research")
+                                    continue
+                                thesis = thesis_gen
 
                             log(f"  📜 Thesis: {thesis[:150]}")
 
