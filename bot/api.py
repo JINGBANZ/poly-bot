@@ -159,6 +159,23 @@ def place_limit_sell(token_id: str, size: float, price: float) -> dict | None:
     except Exception as e:
         return {"error": str(e)}
 
+def place_limit_buy(token_id: str, size: float, price: float) -> dict | None:
+    """Place a GTC limit buy order. Returns order result or None on failure."""
+    client = get_clob_client()
+    if not client:
+        return None
+    try:
+        from py_clob_client.order_builder.constants import BUY
+        order = client.create_and_post_order({
+            "token_id": token_id,
+            "price": price,
+            "size": size,
+            "side": BUY,
+        })
+        return order
+    except Exception as e:
+        return {"error": str(e)}
+
 def market_sell(token_id: str, amount: float) -> dict | None:
     """Market sell (FOK) — sweeps the book like the Polymarket UI does.
     

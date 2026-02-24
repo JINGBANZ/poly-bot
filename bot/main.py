@@ -29,7 +29,9 @@ from .guardrails import check_position
 from .resolver import check_resolution
 from .alerts import write_alert
 from .logger import log
-from .execution import log_trade, get_usdc_balance, check_circuit_breakers
+from .execution import (log_trade, get_usdc_balance, check_circuit_breakers,
+                        load_open_orders, save_open_orders, track_order,
+                        remove_order, get_stale_orders)
 
 running = True
 
@@ -60,6 +62,85 @@ signal.signal(signal.SIGTERM, handle_signal)
 signal.signal(signal.SIGINT, handle_signal)
 
 
+def _try_limit_sell(pos, book: dict, reason: str = ""):
+    """Place a limit sell for a position when market sell can't fill.
+    
+    Only places one order per position (checks tracked orders).
+    """
+    from .api import place_limit_sell
+    from .orderbook import suggest_limit_price
+
+    # Check if we already have an open order for this token
+    tracked = load_open_orders()
+    for o in tracked:
+        if o.get("token_id") == pos.token_id and o.get("side") == "SELL":
+            return  # Already have a limit sell for this position
+
+    price = suggest_limit_price(book, "SELL")
+    if not price or price < config.MIN_SELL_PRICE:
+        if _state_changed(pos.token_id, reason, "no_limit_price"):
+            log(f"  🛑 Can't set limit sell for {pos.title[:40]}: no viable price")
+        return
+
+    result = place_limit_sell(pos.token_id, pos.size, price)
+    if result and "error" not in str(result):
+        order_id = result.get("orderID", result.get("id", str(result)))
+        track_order(
+            order_id=order_id, token_id=pos.token_id,
+            side="SELL", price=price, size=pos.size,
+            name=pos.title, reason=reason,
+        )
+        log(f"  📋 Limit SELL placed: {pos.title[:40]} — {pos.size} shares @ ${price:.2f}")
+        write_alert(f"📋 Limit SELL placed: {pos.title}\n{pos.size} shares @ ${price:.2f}\nReason: {reason}")
+    else:
+        if _state_changed(pos.token_id, reason, "limit_sell_failed"):
+            log(f"  ❌ Limit sell failed for {pos.title[:40]}: {result}")
+
+
+def manage_open_orders(dry_run=False):
+    """Check open limit orders: cancel stale ones, detect fills."""
+    from .api import get_open_orders, cancel_order
+
+    # 1. Cancel stale orders (>24h)
+    stale = get_stale_orders(max_age_hours=config.STALE_ORDER_HOURS)
+    for order in stale:
+        oid = order.get("order_id", "")
+        if not dry_run and oid:
+            cancelled = cancel_order(oid)
+            if cancelled:
+                log(f"🗑️ Cancelled stale order: {order.get('name', oid)[:40]}")
+        remove_order(oid)
+
+    # 2. Check if any tracked orders have filled (no longer in open orders)
+    tracked = load_open_orders()
+    if not tracked:
+        return
+
+    try:
+        live_orders = get_open_orders()
+        live_ids = {o.get("id", o.get("order_id", "")) for o in live_orders if isinstance(o, dict)}
+    except Exception:
+        return  # Can't check, skip this cycle
+
+    for order in tracked[:]:
+        oid = order.get("order_id", "")
+        if oid and oid not in live_ids:
+            # Order is gone from exchange — likely filled
+            side = order.get("side", "?")
+            name = order.get("name", "?")
+            price = order.get("price", 0)
+            size = order.get("size", 0)
+            log(f"✅ Limit {side} filled: {name[:40]} — {size} shares @ ${price:.2f}")
+            write_alert(f"✅ Limit {side} filled: {name}\n{size} shares @ ${price:.2f}")
+            log_trade(
+                f"LIMIT_{side}", name, price, size,
+                amount_usd=price * size,
+                reason=order.get("reason", "limit_order"),
+                token_id=order.get("token_id", ""),
+            )
+            remove_order(oid)
+
+
 def run_cycle(dry_run=False) -> dict:
     """Run one monitoring cycle. Returns summary dict."""
     _cycle_start = time.time()
@@ -75,6 +156,12 @@ def run_cycle(dry_run=False) -> dict:
         if verbose:
             log(f"🚨 Circuit breaker: {cb_reason}")
         dry_run = True
+
+    # 0b. Manage open limit orders (check fills, cancel stale)
+    try:
+        manage_open_orders(dry_run=dry_run)
+    except Exception as e:
+        log(f"⚠️ Order management: {e}")
 
     # 1. Fetch positions
     raw = get_positions()
@@ -127,8 +214,10 @@ def run_cycle(dry_run=False) -> dict:
             bid_price, bid_depth = best_bid(book)
 
             if bid_price < config.MIN_SELL_PRICE or bid_depth < config.MIN_BID_DEPTH_USD:
-                # Only log once per 30 min
-                if _state_changed(pos.token_id, gr.action, "no_liquidity"):
+                # No market liquidity — try placing a limit sell instead
+                if not dry_run:
+                    _try_limit_sell(pos, book, reason=gr.action)
+                elif _state_changed(pos.token_id, gr.action, "no_liquidity"):
                     log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity, holding")
                 continue
 
@@ -210,7 +299,11 @@ def run_cycle(dry_run=False) -> dict:
                                 write_alert(f"✅ LLM SOLD: {pos.title} for ~${sell_amount:.2f}")
                                 log_trade("SELL", pos.title, bid_price, pos.size, profit=pos.pnl, reason="LLM_SELL", thesis=analysis, token_id=pos.token_id)
                     else:
-                        log(f"  🛑 LLM SELL skipped: no liquidity (bid ${bid_price:.2f})")
+                        # No market liquidity — place limit sell
+                        if not dry_run:
+                            _try_limit_sell(pos, book, reason="LLM_SELL")
+                        else:
+                            log(f"  🛑 LLM SELL skipped: no liquidity (bid ${bid_price:.2f})")
 
                 elif analysis.strip().lstrip("*").startswith("ADD"):
                     write_alert(f"🧠 LLM ADD: {pos.title}\n{analysis}")
@@ -380,6 +473,14 @@ def run_cycle(dry_run=False) -> dict:
                                 continue
 
                             book = get_book(token_id)
+
+                            # Orderbook analysis
+                            from .orderbook import analyze_orderbook, suggest_limit_price
+                            ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
+                            if not ob_analysis["tradeable"]:
+                                log(f"  🛑 Orderbook reject: {ob_analysis['reject_reason']}")
+                                continue
+
                             ask_price, ask_depth = best_ask(book)
                             if ask_depth < buy_amount:
                                 log(f"  🛑 Low ask depth: ${ask_depth:.2f}")

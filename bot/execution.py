@@ -8,6 +8,7 @@ from . import config
 from .logger import log
 
 TRADE_LOG = os.path.join(config.STATE_DIR, "trade_log.jsonl")
+OPEN_ORDERS_FILE = os.path.join(config.STATE_DIR, "open_orders.json")
 
 
 def log_trade(action: str, name: str, price: float, shares: float,
@@ -105,6 +106,64 @@ def get_today_trades() -> list:
     except:
         pass
     return trades
+
+
+def load_open_orders() -> list:
+    """Load tracked open orders from state file."""
+    if not os.path.exists(OPEN_ORDERS_FILE):
+        return []
+    try:
+        with open(OPEN_ORDERS_FILE) as f:
+            return json.load(f)
+    except:
+        return []
+
+
+def save_open_orders(orders: list):
+    """Save open orders to state file."""
+    os.makedirs(config.STATE_DIR, exist_ok=True)
+    with open(OPEN_ORDERS_FILE, "w") as f:
+        json.dump(orders, f, indent=2)
+
+
+def track_order(order_id: str, token_id: str, side: str, price: float,
+                size: float, name: str = "", reason: str = ""):
+    """Add a new order to the open orders tracker."""
+    orders = load_open_orders()
+    orders.append({
+        "order_id": order_id,
+        "token_id": token_id,
+        "side": side,
+        "price": price,
+        "size": size,
+        "name": name,
+        "reason": reason,
+        "placed_at": datetime.now(timezone.utc).isoformat(),
+    })
+    save_open_orders(orders)
+
+
+def remove_order(order_id: str):
+    """Remove an order from the tracker."""
+    orders = load_open_orders()
+    orders = [o for o in orders if o.get("order_id") != order_id]
+    save_open_orders(orders)
+
+
+def get_stale_orders(max_age_hours: float = 24.0) -> list:
+    """Return orders older than max_age_hours."""
+    orders = load_open_orders()
+    now = datetime.now(timezone.utc)
+    stale = []
+    for o in orders:
+        try:
+            placed = datetime.fromisoformat(o["placed_at"])
+            age = (now - placed).total_seconds() / 3600
+            if age > max_age_hours:
+                stale.append(o)
+        except:
+            stale.append(o)  # Can't parse date = treat as stale
+    return stale
 
 
 def check_circuit_breakers() -> tuple[bool, str]:
