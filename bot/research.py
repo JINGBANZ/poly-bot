@@ -14,46 +14,14 @@ from datetime import datetime, timezone
 from . import config
 from .logger import log
 
-# ── Brave Search Config ──────────────────────────────────────────────
+# ── Web Search ────────────────────────────────────────────────────────
 
-_brave_key = None
-
-def _get_brave_key() -> str:
-    global _brave_key
-    if _brave_key:
-        return _brave_key
-    try:
-        with open("/home/ubuntu/.openclaw/openclaw.json") as f:
-            data = json.load(f)
-        _brave_key = data["tools"]["web"]["search"]["apiKey"]
-        return _brave_key
-    except Exception as e:
-        log(f"⚠️ Research: Cannot read Brave API key: {e}")
-        return ""
+from .web_search import search as _web_search
 
 
 def brave_search(query: str, count: int = 5) -> list[dict]:
-    """Search via Brave Search API. Returns list of {title, url, snippet}."""
-    key = _get_brave_key()
-    if not key:
-        return []
-    try:
-        r = requests.get(
-            "https://api.search.brave.com/res/v1/web/search",
-            params={"q": query, "count": count},
-            headers={"Accept": "application/json", "Accept-Encoding": "gzip",
-                     "X-Subscription-Token": key},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            log(f"⚠️ Brave search HTTP {r.status_code}")
-            return []
-        results = r.json().get("web", {}).get("results", [])
-        return [{"title": r.get("title", ""), "url": r.get("url", ""),
-                 "snippet": r.get("description", "")} for r in results[:count]]
-    except Exception as e:
-        log(f"⚠️ Brave search error: {e}")
-        return []
+    """Search the web. Legacy name kept for callers; uses DuckDuckGo now."""
+    return _web_search(query, num_results=count)
 
 
 # ── Adverse Selection Check ──────────────────────────────────────────
