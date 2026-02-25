@@ -32,7 +32,7 @@ def _get_token() -> str:
 MODEL = "claude-sonnet-4-6"
 API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
-TIMEOUT = 30
+TIMEOUT = 90
 
 # Rate limiting
 _last_call_ts = 0.0

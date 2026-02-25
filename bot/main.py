@@ -358,16 +358,41 @@ def run_cycle(dry_run=False) -> dict:
             if not candidates:
                 log("  🔍 No candidates in value zone with sufficient volume")
             else:
-                analysis = llm.analyze_markets(candidates[:15])
-                if not analysis:
-                    log("  ⚠️ LLM market scan returned nothing")
+                # Batch candidates into groups of 8 to avoid LLM timeout
+                BATCH_SIZE = 8
+                all_batches = [candidates[i:i+BATCH_SIZE] for i in range(0, min(len(candidates), 24), BATCH_SIZE)]
+                analysis_lines = []
+                batch_candidate_map = []  # (global_candidates_slice, offset) per batch
+
+                for batch_idx, batch in enumerate(all_batches):
+                    offset = batch_idx * BATCH_SIZE
+                    batch_analysis = llm.analyze_markets(batch)
+                    if not batch_analysis:
+                        log(f"  ⚠️ LLM market scan batch {batch_idx+1}/{len(all_batches)} returned nothing")
+                        continue
+                    # Re-number lines from batch-local indices to global indices
+                    for raw_line in batch_analysis.split("\n"):
+                        # Adjust numbering: replace leading number with global index
+                        import re as _re
+                        num_match = _re.match(r'^[\s*]*(\d+)\.', raw_line)
+                        if num_match:
+                            local_idx = int(num_match.group(1))
+                            global_idx = local_idx + offset
+                            adjusted = raw_line[:num_match.start(1)] + str(global_idx) + raw_line[num_match.end(1):]
+                            analysis_lines.append(adjusted)
+                        else:
+                            analysis_lines.append(raw_line)
+
+                analysis = "\n".join(analysis_lines)
+                if not analysis.strip():
+                    log("  ⚠️ LLM market scan returned nothing (all batches empty)")
                 else:
                     # Count recommendations
                     trades = [l for l in analysis.split("\n") if "TRADE" in l.upper().replace("*","") and "SKIP" not in l.upper() and "NO" not in l.upper().split("TRADE")[0]]
                     leans = [l for l in analysis.split("\n") if "LEAN" in l.upper().replace("*","") and "SKIP" not in l.upper()]
                     researches = [l for l in analysis.split("\n") if "RESEARCH" in l.upper().replace("*","") and "SKIP" not in l.upper()]
                     skips = [l for l in analysis.split("\n") if "SKIP" in l.upper()]
-                    log(f"  🔍 Scanned {len(candidates)} markets: {len(trades)} TRADE, {len(leans)} LEAN, {len(researches)} RESEARCH, {len(skips)} SKIP")
+                    log(f"  🔍 Scanned {len(candidates)} markets ({len(all_batches)} batches): {len(trades)} TRADE, {len(leans)} LEAN, {len(researches)} RESEARCH, {len(skips)} SKIP")
                     for t in trades:
                         log(f"  💡 {t.strip()[:150]}")
                     for l in leans:
@@ -534,6 +559,62 @@ def run_cycle(dry_run=False) -> dict:
                     if verdict == "TRADE":
                         log(f"  💎✅ Deep value TRADE: {research_result['thesis'][:150]}")
                         write_alert(f"💎 DEEP VALUE OPPORTUNITY:\n{summary}\n\nResearch: {research_result['thesis'][:300]}")
+
+                        # ── Execute the buy ──
+                        if not dry_run:
+                            thesis = research_result.get("thesis", "")
+                            if not thesis:
+                                from . import llm as _llm
+                                thesis = _llm.generate_thesis(m.get('question'), side, price, research_result.get("research_summary", ""))
+                                if not thesis or thesis.startswith("NO_THESIS"):
+                                    log(f"  🛑 Deep value: no valid thesis")
+                                    continue
+
+                            # Guardrails
+                            vol24 = float(m.get("volume24hr", 0) or 0)
+                            from .guardrails import validate_entry
+                            valid, msg = validate_entry(price, vol24)
+                            if not valid:
+                                log(f"  🛑 Deep value guardrail: {msg}")
+                                continue
+
+                            usdc_balance = get_usdc_balance()
+                            buy_amount = min(config.MAX_POSITION_USD, usdc_balance)
+                            if buy_amount < 1.0:
+                                log(f"  🛑 Deep value: insufficient balance ${usdc_balance:.2f}")
+                                continue
+
+                            # Get token ID for the correct side
+                            token_id = m.get("clobTokenIds", [""])[0] if side == "YES" else m.get("clobTokenIds", ["", ""])[1]
+                            if not token_id:
+                                log(f"  🛑 Deep value: no token ID for {side}")
+                                continue
+
+                            # Check orderbook liquidity
+                            from .api import get_book, best_ask
+                            from .orderbook import analyze_orderbook
+                            book = get_book(token_id)
+                            ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
+                            if not ob_analysis["tradeable"]:
+                                log(f"  🛑 Deep value orderbook reject: {ob_analysis['reject_reason']}")
+                                continue
+
+                            ask_price, ask_depth = best_ask(book)
+                            if ask_depth < buy_amount:
+                                log(f"  🛑 Deep value: low ask depth ${ask_depth:.2f}")
+                                continue
+
+                            from .api import market_buy
+                            result = market_buy(token_id, buy_amount)
+                            if result and "error" not in str(result):
+                                log(f"  ✅ Deep value bought: {m.get('question')[:50]} — {side} @ {price:.2f}, ${buy_amount:.2f}")
+                                write_alert(f"🚀 DEEP VALUE ENTERED: {m.get('question')}\nSide: {side} @ {price:.2f}\nAmt: ${buy_amount:.2f}\n\n{thesis[:300]}")
+                                log_trade("BUY", m.get('question'), ask_price, buy_amount/ask_price, amount_usd=buy_amount, reason="DEEP_VALUE_TRADE", thesis=thesis, token_id=token_id)
+                            else:
+                                log(f"  ❌ Deep value buy failed: {result}")
+                        else:
+                            log(f"  [DRY-RUN] Would buy deep value: {m.get('question')[:50]}")
+
                     elif verdict == "PASS":
                         log(f"  💎❌ Deep value PASS: {research_result['reason'][:100]}")
                     else:
