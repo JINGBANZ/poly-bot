@@ -62,7 +62,31 @@ Ask yourself:
 5. Am I adding a dependency? → Justify it. System packages preferred.
 6. Will this file grow beyond 200 lines? → Split into focused modules.
 
-## Testing
+## Testing — MANDATORY
+
+**Every change to `bot/` MUST pass smoke tests before deploy. No exceptions.**
+
+```bash
+# REQUIRED before every restart/deploy:
+cd /home/ubuntu/.openclaw/workspace/polymarket-bot
+source polymarket-venv/bin/activate
+python -m pytest bot/tests/test_smoke.py -v
+
+# If ANY test fails → DO NOT restart the bot. Fix first.
+```
+
+The smoke tests guard against known regressions:
+- All modules import cleanly
+- `place_limit_sell/buy` use `OrderArgs` (not raw dicts)
+- API success detection handles `errorMsg` key correctly
+- Position objects expose required attributes
+- Config constants exist with correct minimums
+
+**When adding new functionality:**
+- Add a regression test in `bot/tests/test_smoke.py`
+- If you're changing `bot/api.py` or `bot/execution.py`, you MUST add a test covering the change
+
+**Why this exists:** Phase 57 subagent broke `place_limit_sell` by swapping `OrderArgs` for raw dicts. No tests caught it. The bot threw errors for hours on all 3 positions. Never again.
 
 ```bash
 # Dry run the bot
