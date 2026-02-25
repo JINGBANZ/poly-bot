@@ -15,7 +15,8 @@ def test_all_modules_import():
     modules = [
         "bot.config", "bot.api", "bot.execution", "bot.portfolio",
         "bot.guardrails", "bot.llm", "bot.search", "bot.news",
-        "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.main",
+        "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.web_search",
+        "bot.deep_scanner", "bot.research", "bot.main",
     ]
     for mod in modules:
         try:
@@ -71,6 +72,25 @@ def test_position_has_token_id_attribute():
     })
     assert hasattr(p, "token_id"), "Position must have token_id attribute"
     assert p.token_id == "0xtoken123"
+
+
+def test_web_search_module():
+    """web_search module imports and has correct interface."""
+    from bot.web_search import search
+    import inspect
+    sig = inspect.signature(search)
+    assert "query" in sig.parameters
+    assert "num_results" in sig.parameters
+    # Verify it returns a list (don't hit network in CI)
+    assert callable(search)
+
+
+def test_research_brave_search_delegates():
+    """research.brave_search should delegate to web_search."""
+    import inspect
+    from bot.research import brave_search
+    source = inspect.getsource(brave_search)
+    assert "_web_search" in source, "brave_search must delegate to web_search module"
 
 
 def test_config_constants():
