@@ -1,9 +1,10 @@
-"""News module — Twitter/X monitoring for position-relevant news."""
+"""News module — RSS feeds (primary) + Twitter/X (optional fallback)."""
 
 import os
 import requests
 import urllib.parse
 from .logger import log
+from .rss_news import fetch_news as rss_fetch_news
 
 def get_bearer_token() -> str:
     token = os.environ.get("X_BEARER_TOKEN", "")
@@ -48,8 +49,8 @@ POSITION_QUERIES = {
 }
 
 def scan_news_for_positions(position_titles: list[str]) -> list[dict]:
-    """Scan Twitter for news relevant to our positions.
-    Returns list of {position, query, tweets} dicts with notable findings."""
+    """Scan RSS feeds (primary) and Twitter (fallback) for position-relevant news.
+    Returns list of {position, query, news_items} dicts with notable findings."""
     findings = []
     
     for title in position_titles:
@@ -63,34 +64,35 @@ def scan_news_for_positions(position_titles: list[str]) -> list[dict]:
         if not query:
             continue
         
-        tweets = search_tweets(query)
-        if not tweets:
-            continue
+        # Primary: RSS feeds
+        news_items = rss_fetch_news(query, max_results=5)
         
-        # Filter for high-engagement or breaking news
-        notable = []
-        for t in tweets:
-            likes = t.get("public_metrics", {}).get("like_count", 0)
-            retweets = t.get("public_metrics", {}).get("retweet_count", 0)
-            text = t["text"][:200]
-            
-            # Notable if: high engagement OR contains key signal words
-            signal_words = ["breaking", "just in", "alert", "confirmed", "official",
-                          "strike", "attack", "win", "beat", "miss", "surge", "crash"]
-            has_signal = any(w in text.lower() for w in signal_words)
-            
-            if likes >= 10 or retweets >= 5 or has_signal:
-                notable.append({
-                    "text": text,
-                    "likes": likes,
-                    "retweets": retweets,
-                })
+        # Fallback: Twitter (if RSS found nothing and Twitter is available)
+        notable_tweets = []
+        if not news_items:
+            tweets = search_tweets(query)
+            for t in tweets:
+                likes = t.get("public_metrics", {}).get("like_count", 0)
+                retweets = t.get("public_metrics", {}).get("retweet_count", 0)
+                text = t["text"][:200]
+                
+                signal_words = ["breaking", "just in", "alert", "confirmed", "official",
+                              "strike", "attack", "win", "beat", "miss", "surge", "crash"]
+                has_signal = any(w in text.lower() for w in signal_words)
+                
+                if likes >= 10 or retweets >= 5 or has_signal:
+                    notable_tweets.append({
+                        "text": text,
+                        "likes": likes,
+                        "retweets": retweets,
+                    })
         
-        if notable:
-            findings.append({
-                "position": title,
-                "query": query,
-                "notable_tweets": notable[:3],  # top 3
-            })
+        if news_items or notable_tweets:
+            finding = {"position": title, "query": query}
+            if news_items:
+                finding["news_items"] = news_items
+            if notable_tweets:
+                finding["notable_tweets"] = notable_tweets[:3]
+            findings.append(finding)
     
     return findings

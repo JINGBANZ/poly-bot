@@ -16,8 +16,14 @@ def test_all_modules_import():
         "bot.config", "bot.api", "bot.execution", "bot.portfolio",
         "bot.guardrails", "bot.llm", "bot.search", "bot.news",
         "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.web_search",
-        "bot.deep_scanner", "bot.research", "bot.main",
+        "bot.rss_news", "bot.deep_scanner", "bot.research", "bot.main",
     ]
+    # Also verify test modules import cleanly
+    test_modules = [
+        "bot.tests.test_api", "bot.tests.test_portfolio",
+        "bot.tests.test_guardrails", "bot.tests.test_execution",
+    ]
+    modules.extend(test_modules)
     for mod in modules:
         try:
             importlib.import_module(mod)
@@ -91,6 +97,26 @@ def test_research_brave_search_delegates():
     from bot.research import brave_search
     source = inspect.getsource(brave_search)
     assert "_web_search" in source, "brave_search must delegate to web_search module"
+
+
+def test_rss_news_interface():
+    """rss_news module has correct fetch_news interface."""
+    from bot.rss_news import fetch_news, FEEDS, ALL_FEEDS
+    import inspect
+    sig = inspect.signature(fetch_news)
+    assert "query" in sig.parameters
+    assert "max_results" in sig.parameters
+    assert callable(fetch_news)
+    assert isinstance(FEEDS, dict)
+    assert len(ALL_FEEDS) > 0
+
+
+def test_news_uses_rss_primary():
+    """news.py must import and use rss_news as primary source."""
+    import inspect
+    from bot.news import scan_news_for_positions
+    source = inspect.getsource(scan_news_for_positions)
+    assert "rss_fetch_news" in source, "scan_news_for_positions must use RSS as primary"
 
 
 def test_config_constants():
