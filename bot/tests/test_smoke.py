@@ -15,7 +15,7 @@ def test_all_modules_import():
     modules = [
         "bot.config", "bot.api", "bot.execution", "bot.portfolio",
         "bot.guardrails", "bot.llm", "bot.search", "bot.news",
-        "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.web_search",
+        "bot.earnings", "bot.earnings_scraper", "bot.postmortem", "bot.orderbook", "bot.web_search",
         "bot.rss_news", "bot.deep_scanner", "bot.research", "bot.whale_monitor",
         "bot.crypto_feed", "bot.threshold_monitor", "bot.gov_monitor", "bot.main",
     ]
