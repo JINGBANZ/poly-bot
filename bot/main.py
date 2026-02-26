@@ -313,6 +313,17 @@ def run_cycle(dry_run=False) -> dict:
     except Exception as e:
         log(f"  ⚠️ Whale monitor: {e}")
 
+    # 2b. Earnings release scraper — check EVERY cycle for speed
+    try:
+        from .earnings_scraper import get_watched_tickers, process_earnings_for_execution, execute_earnings_signal
+        watched = get_watched_tickers()
+        if watched:
+            signals = process_earnings_for_execution(watched, dry_run=dry_run)
+            for sig in signals:
+                execute_earnings_signal(sig, dry_run=dry_run)
+    except Exception as e:
+        log(f"  ⚠️ Earnings scraper: {e}")
+
     # 3. News scan (every 6th cycle = ~30 min)
     findings = []
     if verbose:

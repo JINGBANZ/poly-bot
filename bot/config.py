@@ -34,6 +34,11 @@ VALUE_ZONE_MAX = 0.25         # Only enter below 25¢ (Phase 63: backtest showed
 MAX_SPREAD_PCT = 0.10         # Reject trades with spread > 10%
 STALE_ORDER_HOURS = 24        # Cancel open orders older than this
 
+# Whale detection
+WHALE_PRICE_MOVE_THRESHOLD = 0.05  # 5¢ midpoint move between cycles = whale
+WHALE_VOLUME_SPIKE_RATIO = 3.0     # 3x normal volume = spike (future use)
+WHALE_FOLLOW_MAX_USD = 1.50        # Max exposure on momentum trades
+
 # Circuit breakers
 MAX_DAILY_TRADES = 3          # Max trades per day (buys + sells)
 MAX_DAILY_LOSS_USD = 3.00     # Halt trading if daily realized loss exceeds this
