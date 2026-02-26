@@ -150,6 +150,16 @@ def run_cycle(dry_run=False) -> dict:
     # Only log separator on verbose cycles (every 6th = 30 min)
     verbose = (cycle_count % 6 == 1)
 
+    # 0a. FAST PATH: Crypto threshold check (every cycle, no LLM)
+    try:
+        from .threshold_monitor import run_threshold_check
+        threshold_trades = run_threshold_check(dry_run=dry_run)
+        if threshold_trades > 0:
+            log(f"🎯 Threshold fast-path: {threshold_trades} trade(s) executed")
+    except Exception as e:
+        if verbose:
+            log(f"⚠️ Threshold check: {e}")
+
     # 0. Circuit breaker check
     can_trade, cb_reason = check_circuit_breakers()
     if not can_trade:
@@ -237,6 +247,33 @@ def run_cycle(dry_run=False) -> dict:
                 else:
                     log(f"  ❌ Sell failed: {pos.title}: {result}")
                     write_alert(f"❌ Sell failed for {pos.title}: {result}")
+
+    # 2b. Government feed monitoring (every cycle — feeds update infrequently)
+    try:
+        from .gov_monitor import check_gov_feeds, match_to_markets
+        gov_announcements = check_gov_feeds()
+        if gov_announcements:
+            # Try to match against current positions + active markets
+            position_markets = [{"question": p.title, "title": p.title} for p in portfolio.positions]
+            gov_matches = match_to_markets(gov_announcements, position_markets)
+
+            for ann in gov_announcements:
+                log(f"  🏛️ GOV: [{ann['source']}] {ann['title'][:100]}")
+
+            for match in gov_matches[:5]:
+                ann = match["announcement"]
+                mkt = match["market"]
+                kws = ", ".join(match["matched_keywords"][:5])
+                log(f"  🏛️ GOV ALERT: {ann['title'][:60]} — matching to '{mkt.get('question', mkt.get('title', ''))[:60]}'")
+                write_alert(
+                    f"{ann['emoji']} GOV ALERT: {ann['title']}\n"
+                    f"Source: {ann['source']}\n"
+                    f"Matches: {mkt.get('question', mkt.get('title', ''))}\n"
+                    f"Keywords: {kws}\n"
+                    f"Link: {ann.get('link', 'N/A')}"
+                )
+    except Exception as e:
+        log(f"  ⚠️ Gov monitor: {e}")
 
     # 3. News scan (every 6th cycle = ~30 min)
     findings = []

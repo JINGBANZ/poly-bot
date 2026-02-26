@@ -16,7 +16,8 @@ def test_all_modules_import():
         "bot.config", "bot.api", "bot.execution", "bot.portfolio",
         "bot.guardrails", "bot.llm", "bot.search", "bot.news",
         "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.web_search",
-        "bot.rss_news", "bot.deep_scanner", "bot.research", "bot.main",
+        "bot.rss_news", "bot.deep_scanner", "bot.research",
+        "bot.crypto_feed", "bot.threshold_monitor", "bot.gov_monitor", "bot.main",
     ]
     # Also verify test modules import cleanly
     test_modules = [
@@ -119,6 +120,69 @@ def test_news_uses_rss_primary():
     assert "rss_fetch_news" in source, "scan_news_for_positions must use RSS as primary"
 
 
+def test_crypto_feed_interface():
+    """crypto_feed module has correct interface."""
+    from bot.crypto_feed import get_prices, _CACHE_TTL
+    assert callable(get_prices)
+    assert _CACHE_TTL == 5
+
+
+def test_threshold_monitor_parse():
+    """threshold_monitor can parse crypto threshold markets."""
+    from bot.threshold_monitor import _parse_threshold_market, _parse_price
+
+    # Basic below
+    r = _parse_threshold_market("Will Bitcoin drop below $60,000 in February?")
+    assert r is not None
+    assert r["symbol"] == "BTC"
+    assert r["threshold"] == 60000.0
+    assert r["direction"] == "below"
+
+    # Above with K suffix
+    r = _parse_threshold_market("Will ETH reach $4K before March?")
+    assert r is not None
+    assert r["symbol"] == "ETH"
+    assert r["threshold"] == 4000.0
+    assert r["direction"] == "above"
+
+    # SOL
+    r = _parse_threshold_market("Will Solana hit $200 in Q1?")
+    assert r is not None
+    assert r["symbol"] == "SOL"
+    assert r["threshold"] == 200.0
+    assert r["direction"] == "above"
+
+    # Non-crypto should return None
+    assert _parse_threshold_market("Will Trump win the election?") is None
+
+    # Price parsing
+    assert _parse_price("60,000") == 60000.0
+    assert _parse_price("4K") == 4000.0
+    assert _parse_price("1.5M") == 1500000.0
+
+
+def test_threshold_check_crossings():
+    """check_crossings correctly identifies price crossings."""
+    from bot.threshold_monitor import check_crossings
+
+    prices = {"BTC": 59800.0, "ETH": 4100.0}
+    markets = [
+        {"symbol": "BTC", "threshold": 60000.0, "direction": "below",
+         "condition_id": "abc", "market": {}, "yes_price": 0.3},
+        {"symbol": "ETH", "threshold": 4000.0, "direction": "above",
+         "condition_id": "def", "market": {}, "yes_price": 0.4},
+    ]
+
+    crossings = check_crossings(prices, markets)
+    assert len(crossings) == 2
+    assert crossings[0]["side"] == "YES"  # BTC below 60K
+    assert crossings[1]["side"] == "YES"  # ETH above 4K
+
+    # Not crossed
+    prices2 = {"BTC": 61000.0, "ETH": 3900.0}
+    assert len(check_crossings(prices2, markets)) == 0
+
+
 def test_config_constants():
     """Critical config values must exist."""
     from bot import config
@@ -127,3 +191,60 @@ def test_config_constants():
     assert hasattr(config, "MAX_DAILY_LOSS_USD")
     assert hasattr(config, "BALANCE_FLOOR_USD")
     assert config.MIN_VOLUME_24H >= 50000, "Volume floor must be >= $50K"
+
+
+def test_gov_monitor_interface():
+    """gov_monitor has correct public interface."""
+    from bot.gov_monitor import check_gov_feeds, match_to_markets, GOV_FEEDS
+    assert callable(check_gov_feeds)
+    assert callable(match_to_markets)
+    assert len(GOV_FEEDS) >= 5
+
+
+def test_gov_monitor_match_to_markets():
+    """match_to_markets correctly matches announcements to markets."""
+    from bot.gov_monitor import match_to_markets
+
+    announcements = [{
+        "source": "Federal Reserve",
+        "emoji": "🏦",
+        "title": "Federal Reserve issues FOMC statement on interest rate decision",
+        "summary": "The Federal Open Market Committee decided to cut the federal funds rate by 25 basis points.",
+        "link": "https://example.com",
+        "published": "2025-01-01T00:00:00Z",
+        "keywords": ["rate", "fomc", "interest", "monetary", "inflation", "fed",
+                      "basis point", "taper", "quantitative", "balance sheet"],
+    }]
+
+    markets = [
+        {"question": "Will the Fed cut interest rates in March?", "description": "Federal Reserve FOMC rate decision"},
+        {"question": "Will Bitcoin reach $100K?", "description": "Crypto price prediction"},
+    ]
+
+    matches = match_to_markets(announcements, markets)
+    assert len(matches) >= 1
+    assert matches[0]["market"]["question"] == "Will the Fed cut interest rates in March?"
+    assert matches[0]["score"] >= 2
+
+
+def test_gov_monitor_no_false_matches():
+    """match_to_markets doesn't match unrelated content."""
+    from bot.gov_monitor import match_to_markets
+
+    announcements = [{
+        "source": "State Department",
+        "emoji": "🌐",
+        "title": "Secretary of State visits Japan for cultural exchange",
+        "summary": "Routine diplomatic visit focused on cultural programs.",
+        "link": "https://example.com",
+        "published": "2025-01-01T00:00:00Z",
+        "keywords": ["ceasefire", "treaty", "diplomatic", "ambassador", "withdraw",
+                      "peace", "conflict", "war", "negotiate", "alliance"],
+    }]
+
+    markets = [
+        {"question": "Will Bitcoin reach $100K?", "description": "Crypto price prediction"},
+    ]
+
+    matches = match_to_markets(announcements, markets)
+    assert len(matches) == 0
