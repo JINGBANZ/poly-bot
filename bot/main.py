@@ -275,6 +275,44 @@ def run_cycle(dry_run=False) -> dict:
     except Exception as e:
         log(f"  ⚠️ Gov monitor: {e}")
 
+    # 2b. Whale detection — check for large orders moving prices
+    try:
+        from .whale_monitor import run_whale_check, get_watched_markets_from_positions
+        watched = get_watched_markets_from_positions(portfolio.positions)
+        whale_signals = run_whale_check(watched, dry_run=dry_run)
+        for ws in whale_signals:
+            from .alerts import write_alert as _write_alert
+            _write_alert(f"🐋 WHALE: {ws['title'][:50]} — {ws['direction']} {ws['abs_move']*100:.0f}¢, {ws['side']}")
+
+            if not dry_run:
+                # Fast-path: guardrails → execution
+                from .guardrails import validate_entry
+                # Use a relaxed volume check — we already hold this position
+                valid, msg = True, ""
+                spread_pct = ws.get("spread", 0) / ws["entry_price"] if ws["entry_price"] > 0 else 1
+                if spread_pct > config.MAX_SPREAD_PCT:
+                    valid, msg = False, f"spread too wide: {spread_pct:.1%}"
+
+                if valid:
+                    usdc_balance = get_usdc_balance()
+                    buy_amount = min(ws["max_usd"], usdc_balance - config.BALANCE_FLOOR_USD)
+                    if buy_amount >= 0.50:
+                        from .api import market_buy
+                        result = market_buy(ws["token_id"], buy_amount)
+                        if result and "error" not in str(result):
+                            log(f"  🐋✅ Whale follow: bought ${buy_amount:.2f} of {ws['title'][:40]}")
+                            _write_alert(f"🐋✅ Whale follow bought: {ws['title']}\n{ws['side']} ${buy_amount:.2f}")
+                            log_trade("BUY", ws["title"], ws["entry_price"], buy_amount/ws["entry_price"],
+                                     amount_usd=buy_amount, reason="WHALE_FOLLOW", token_id=ws["token_id"])
+                        else:
+                            log(f"  🐋❌ Whale follow buy failed: {result}")
+                    else:
+                        log(f"  🐋 Whale follow skipped: insufficient balance (${usdc_balance:.2f})")
+                else:
+                    log(f"  🐋 Whale follow skipped: {msg}")
+    except Exception as e:
+        log(f"  ⚠️ Whale monitor: {e}")
+
     # 3. News scan (every 6th cycle = ~30 min)
     findings = []
     if verbose:
