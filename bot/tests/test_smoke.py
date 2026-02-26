@@ -16,7 +16,7 @@ def test_all_modules_import():
         "bot.config", "bot.api", "bot.execution", "bot.portfolio",
         "bot.guardrails", "bot.llm", "bot.search", "bot.news",
         "bot.earnings", "bot.postmortem", "bot.orderbook", "bot.web_search",
-        "bot.rss_news", "bot.deep_scanner", "bot.research",
+        "bot.rss_news", "bot.deep_scanner", "bot.research", "bot.whale_monitor",
         "bot.crypto_feed", "bot.threshold_monitor", "bot.gov_monitor", "bot.main",
     ]
     # Also verify test modules import cleanly
@@ -183,6 +183,75 @@ def test_threshold_check_crossings():
     assert len(check_crossings(prices2, markets)) == 0
 
 
+def test_earnings_scraper_imports():
+    """earnings_scraper module imports and has correct interface."""
+    from bot.earnings_scraper import (
+        get_watched_tickers, check_earnings_releases, parse_eps,
+        evaluate_beat, process_earnings_for_execution, execute_earnings_signal,
+    )
+    assert callable(get_watched_tickers)
+    assert callable(check_earnings_releases)
+    assert callable(parse_eps)
+    assert callable(evaluate_beat)
+
+
+def test_earnings_scraper_parse_eps():
+    """parse_eps extracts EPS from press release text."""
+    from bot.earnings_scraper import parse_eps
+
+    # Test GAAP EPS extraction
+    text1 = "GAAP net loss per share of $(0.05) for the fourth quarter"
+    result1 = parse_eps(text1)
+    assert result1["eps_gaap"] is not None
+    assert result1["eps_gaap"] == -0.05
+
+    # Test positive EPS
+    text2 = "GAAP earnings per share of $1.25 for Q4"
+    result2 = parse_eps(text2)
+    assert result2["eps_gaap"] is not None
+    assert result2["eps_gaap"] == 1.25
+
+    # Test revenue extraction
+    text3 = "Revenue of $80.5 million for the quarter. GAAP EPS of $0.10."
+    result3 = parse_eps(text3)
+    assert result3["revenue"] == 80_500_000
+    assert result3["eps_gaap"] == 0.10
+
+    # Empty text
+    assert parse_eps("")["eps_gaap"] is None
+
+
+def test_earnings_scraper_evaluate_beat():
+    """evaluate_beat correctly compares EPS to threshold."""
+    from bot.earnings_scraper import evaluate_beat
+
+    # BYND case: EPS -0.05 vs threshold -0.08 → BEAT (greater than)
+    assert evaluate_beat(-0.05, -0.08) == "BEAT"
+    # EPS exactly at threshold → MISS (not strictly greater)
+    assert evaluate_beat(-0.08, -0.08) == "MISS"
+    # EPS below threshold → MISS
+    assert evaluate_beat(-0.10, -0.08) == "MISS"
+    # Positive case
+    assert evaluate_beat(0.05, 0.02) == "BEAT"
+
+
+def test_earnings_scraper_threshold_parsing():
+    """_parse_threshold_from_market extracts thresholds from slugs."""
+    from bot.earnings_scraper import _parse_threshold_from_market
+
+    # Negative threshold from slug
+    m1 = {"slug": "bynd-quarterly-earnings-gaap-eps-02-25-2026-neg0pt08", "description": ""}
+    assert _parse_threshold_from_market(m1) == -0.08
+
+    # Positive threshold from slug
+    m2 = {"slug": "wrby-quarterly-earnings-gaap-eps-02-26-2026-0pt02", "description": ""}
+    assert _parse_threshold_from_market(m2) == 0.02
+
+    # From description fallback
+    m3 = {"slug": "something-else", "description": "GAAP EPS greater than $-0.08"}
+    assert _parse_threshold_from_market(m3) == -0.08
+
+
 def test_config_constants():
     """Critical config values must exist."""
     from bot import config
@@ -191,6 +260,66 @@ def test_config_constants():
     assert hasattr(config, "MAX_DAILY_LOSS_USD")
     assert hasattr(config, "BALANCE_FLOOR_USD")
     assert config.MIN_VOLUME_24H >= 50000, "Volume floor must be >= $50K"
+    # Whale config
+    assert hasattr(config, "WHALE_PRICE_MOVE_THRESHOLD")
+    assert hasattr(config, "WHALE_VOLUME_SPIKE_RATIO")
+    assert hasattr(config, "WHALE_FOLLOW_MAX_USD")
+    assert config.WHALE_PRICE_MOVE_THRESHOLD == 0.05
+    assert config.WHALE_FOLLOW_MAX_USD <= config.MAX_POSITION_USD
+
+
+def test_whale_monitor_imports():
+    """whale_monitor module imports cleanly."""
+    from bot.whale_monitor import (
+        snapshot_orderbooks, detect_whale_activity, should_follow,
+        run_whale_check, get_watched_markets_from_positions, reset,
+    )
+    assert callable(snapshot_orderbooks)
+    assert callable(detect_whale_activity)
+    assert callable(should_follow)
+
+
+def test_whale_detect_basic():
+    """detect_whale_activity finds significant price moves."""
+    from bot.whale_monitor import detect_whale_activity
+    from bot import config
+
+    prev = {"tok1": {"bid": 0.40, "ask": 0.42, "mid": 0.41, "spread": 0.02,
+                     "bid_depth": 10, "ask_depth": 10, "ts": 1000, "title": "Test"}}
+    curr = {"tok1": {"bid": 0.47, "ask": 0.49, "mid": 0.48, "spread": 0.02,
+                     "bid_depth": 10, "ask_depth": 10, "ts": 1300, "title": "Test"}}
+
+    signals = detect_whale_activity(curr, prev)
+    assert len(signals) == 1
+    assert signals[0]["direction"] == "UP"
+    assert signals[0]["abs_move"] >= config.WHALE_PRICE_MOVE_THRESHOLD
+
+    # Small move — should NOT trigger
+    curr_small = {"tok1": {"bid": 0.41, "ask": 0.43, "mid": 0.42, "spread": 0.02,
+                           "bid_depth": 10, "ask_depth": 10, "ts": 1300, "title": "Test"}}
+    assert len(detect_whale_activity(curr_small, prev)) == 0
+
+
+def test_whale_should_follow_guards():
+    """should_follow rejects bad signals."""
+    from bot.whale_monitor import should_follow, reset
+    reset()
+
+    # Too large a move — we're late
+    big_signal = {"token_id": "t1", "title": "X", "direction": "UP",
+                  "curr_mid": 0.60, "abs_move": 0.20, "spread": 0.02,
+                  "bid_depth": 10, "ask_depth": 10, "entry_price": 0.60}
+    result = should_follow(big_signal)
+    assert not result["follow"]
+    assert "too large" in result["reason"]
+
+    # Good signal
+    good_signal = {"token_id": "t2", "title": "Y", "direction": "UP",
+                   "curr_mid": 0.50, "abs_move": 0.07, "spread": 0.02,
+                   "bid_depth": 10, "ask_depth": 10, "entry_price": 0.50}
+    result = should_follow(good_signal)
+    assert result["follow"]
+    assert result["side"] == "YES"
 
 
 def test_gov_monitor_interface():
