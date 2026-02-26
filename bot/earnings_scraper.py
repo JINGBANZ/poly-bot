@@ -428,7 +428,7 @@ def parse_eps(release_text: str) -> dict:
         # "GAAP net loss per share of $0.05" / "GAAP EPS of $0.05"
         r'GAAP\s+(?:net\s+)?(?:loss|income|earnings?)\s+per\s+(?:diluted\s+)?share\s+(?:of\s+)?\$?\(?([\d.]+)\)?',
         # "GAAP EPS of ($0.05)" or "GAAP EPS of -$0.05"
-        r'GAAP\s+EPS\s+(?:of\s+)?-?\$?\(?([\d.]+)\)?',
+        r'GAAP\s+EPS\s+(?:of\s+)?-?\$?\(?(\d+\.\d+|\d+)\)?',
         # "net loss per share was $0.05" (contextual — may be GAAP)
         r'net\s+(?:loss|income|earnings?)\s+per\s+(?:diluted\s+)?(?:common\s+)?share\s+(?:was|of)\s+-?\$?\(?([\d.]+)\)?',
         # "earnings per share of $0.05"
@@ -436,7 +436,7 @@ def parse_eps(release_text: str) -> dict:
         # "(loss) per share: $(0.05)" in table format
         r'(?:loss|income|earnings?)\s+per\s+(?:diluted\s+)?share[:\s]+\$?\(?([\d.]+)\)?',
         # "EPS: $0.05" or "EPS $0.05"
-        r'\bEPS[:\s]+\$?\(?([\d.]+)\)?',
+        r'\bEPS[:\s]+\$?\(?(\d+\.\d+)\)?',
     ]
 
     for pattern in gaap_patterns:
