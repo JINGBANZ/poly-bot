@@ -65,12 +65,19 @@ def _should_actively_sell(pos: Position) -> bool:
         return False
 
 
-def validate_entry(price: float, volume_24h: float) -> tuple[bool, str]:
-    """Validate whether a new trade meets entry criteria."""
+def validate_entry(price: float, volume_24h: float, skip_value_zone: bool = False) -> tuple[bool, str]:
+    """Validate whether a new trade meets entry criteria.
+    
+    Args:
+        skip_value_zone: If True, skip price range check. Use for fast-path
+            modules with confirmed information edge (threshold crossings,
+            earnings beats, gov announcements, whale following).
+    """
     if volume_24h < config.MIN_VOLUME_24H:
         return False, f"Volume ${volume_24h:,.0f} < ${config.MIN_VOLUME_24H:,.0f} minimum"
-    if price < config.VALUE_ZONE_MIN:
-        return False, f"Price {price:.2f} below value zone ({config.VALUE_ZONE_MIN})"
-    if price > config.VALUE_ZONE_MAX:
-        return False, f"Price {price:.2f} above value zone ({config.VALUE_ZONE_MAX})"
+    if not skip_value_zone:
+        if price < config.VALUE_ZONE_MIN:
+            return False, f"Price {price:.2f} below value zone ({config.VALUE_ZONE_MIN})"
+        if price > config.VALUE_ZONE_MAX:
+            return False, f"Price {price:.2f} above value zone ({config.VALUE_ZONE_MAX})"
     return True, "OK"
