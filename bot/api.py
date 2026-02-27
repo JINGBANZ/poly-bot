@@ -38,8 +38,9 @@ def best_bid(book: dict) -> tuple[float, float]:
     bids = book.get("bids", [])
     if not bids:
         return 0.0, 0.0
-    price = float(bids[0]["price"])
-    depth = sum(float(b["price"]) * float(b["size"]) for b in bids[:5])
+    sorted_bids = sorted(bids, key=lambda b: float(b["price"]), reverse=True)
+    price = float(sorted_bids[0]["price"])
+    depth = sum(float(b["price"]) * float(b["size"]) for b in sorted_bids[:5])
     return price, depth
 
 def best_ask(book: dict) -> tuple[float, float]:
@@ -47,8 +48,9 @@ def best_ask(book: dict) -> tuple[float, float]:
     asks = book.get("asks", [])
     if not asks:
         return 1.0, 0.0
-    price = float(asks[0]["price"])
-    depth = sum(float(a["price"]) * float(a["size"]) for a in asks[:5])
+    sorted_asks = sorted(asks, key=lambda a: float(a["price"]))
+    price = float(sorted_asks[0]["price"])
+    depth = sum(float(a["price"]) * float(a["size"]) for a in sorted_asks[:5])
     return price, depth
 
 # === MARKET DATA ===
