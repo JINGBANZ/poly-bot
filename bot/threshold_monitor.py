@@ -215,11 +215,11 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
 
     entry_price = yes_price if side == "YES" else (1 - yes_price)
 
-    # Guardrails
+    # Guardrails — skip value zone check for confirmed crossings (we KNOW the outcome)
+    # Only enforce volume minimum
     vol24 = float(market.get("volume24hr", 0) or 0)
-    valid, msg = validate_entry(entry_price, vol24)
-    if not valid:
-        log(f"   🛑 Guardrail: {msg}")
+    if vol24 < config.MIN_VOLUME_24H:
+        log(f"   🛑 Guardrail: Volume ${vol24:,.0f} < ${config.MIN_VOLUME_24H:,.0f} minimum")
         return False
 
     # Balance check
