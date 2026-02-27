@@ -579,7 +579,14 @@ def run_cycle(dry_run=False) -> dict:
 
                             # Check ask liquidity
                             from .api import get_book, best_ask
-                            token_id = market.get("clobTokenIds", [""])[0] if side == "YES" else market.get("clobTokenIds", ["", ""])[1]
+                            clob_ids = market.get("clobTokenIds", "[]")
+                            if isinstance(clob_ids, str):
+                                import json as _json
+                                try:
+                                    clob_ids = _json.loads(clob_ids)
+                                except Exception:
+                                    clob_ids = []
+                            token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
                             if not token_id:
                                 continue
 
@@ -671,7 +678,14 @@ def run_cycle(dry_run=False) -> dict:
                                 continue
 
                             # Get token ID for the correct side
-                            token_id = m.get("clobTokenIds", [""])[0] if side == "YES" else m.get("clobTokenIds", ["", ""])[1]
+                            clob_ids = m.get("clobTokenIds", "[]")
+                            if isinstance(clob_ids, str):
+                                import json as _json
+                                try:
+                                    clob_ids = _json.loads(clob_ids)
+                                except Exception:
+                                    clob_ids = []
+                            token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
                             if not token_id:
                                 log(f"  🛑 Deep value: no token ID for {side}")
                                 continue
