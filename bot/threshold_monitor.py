@@ -230,7 +230,13 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
         return False
 
     # Get token ID
-    clob_ids = market.get("clobTokenIds", [])
+    clob_ids = market.get("clobTokenIds", "[]")
+    if isinstance(clob_ids, str):
+        import json as _json
+        try:
+            clob_ids = _json.loads(clob_ids)
+        except Exception:
+            clob_ids = []
     if side == "YES":
         token_id = clob_ids[0] if len(clob_ids) > 0 else ""
     else:
