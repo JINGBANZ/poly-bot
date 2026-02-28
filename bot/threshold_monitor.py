@@ -195,6 +195,10 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
 
     question = market.get("question", "?")
 
+    # Set cooldown immediately to prevent spam (even if trade fails)
+    key = (condition_id, crossing["direction"])
+    _acted_crossings[key] = time.time()
+
     # Log the crossing
     direction_symbol = "<" if crossing["direction"] == "below" else ">"
     log(f"🎯 THRESHOLD CROSSED: {symbol} at ${current_price:,.2f} {direction_symbol} ${threshold:,.2f} — buying {side}")
@@ -263,7 +267,7 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
 
     # Execute!
     result = market_buy(token_id, buy_amount)
-    if result and "error" not in str(result):
+    if result and (result.get("success") or result.get("orderID")) and "error" not in result:
         log(f"   ✅ Bought: {question[:50]} — {side} @ {entry_price:.2f}, ${buy_amount:.2f}")
         write_alert(
             f"🎯 THRESHOLD TRADE: {symbol} crossed ${threshold:,.0f}\n"
@@ -277,9 +281,6 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
             thesis=f"{symbol} at ${current_price:,.2f} crossed ${threshold:,.0f} threshold",
             token_id=token_id,
         )
-        # Mark as acted
-        key = (condition_id, crossing["direction"])
-        _acted_crossings[key] = time.time()
         return True
     else:
         log(f"   ❌ Buy failed: {result}")

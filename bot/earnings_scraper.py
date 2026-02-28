@@ -606,7 +606,7 @@ def execute_earnings_signal(signal: dict, dry_run: bool = False) -> dict | None:
         return {"action": "DRY_RUN", "side": side, "amount": buy_amount}
 
     result = market_buy(token_id, buy_amount)
-    if result and "error" not in str(result):
+    if result and (result.get("success") or result.get("orderID")) and "error" not in result:
         log(f"  ✅ EARNINGS TRADE: Bought {ticker} {side} — ${buy_amount:.2f}")
         write_alert(f"🚀 {alert_msg}\nAmount: ${buy_amount:.2f}")
         log_trade(
