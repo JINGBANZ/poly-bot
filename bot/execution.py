@@ -33,22 +33,43 @@ def log_trade(action: str, name: str, price: float, shares: float,
 
 
 def get_usdc_balance() -> float:
-    """Estimate free USDC in Polymarket exchange.
+    """Get actual free USDC balance from Polymarket exchange.
     
-    There's no direct API for exchange cash balance. We compute it from:
-    deposit - total_buys + total_sells + redemptions
+    Uses the CLOB client's get_balance_allowance API — this is the
+    DEFINITIVE source of truth for available cash. No estimation needed.
+    """
+    try:
+        from .api import get_clob_client
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+        
+        client = get_clob_client()
+        if not client:
+            return 0.0
+        
+        params = BalanceAllowanceParams(
+            asset_type=AssetType.COLLATERAL,
+            signature_type=1,
+        )
+        result = client.get_balance_allowance(params)
+        balance_raw = int(result.get("balance", 0))
+        return balance_raw / 1e6  # USDC has 6 decimals
+    except Exception:
+        return 0.0
+
+
+def _get_usdc_balance_legacy() -> float:
+    """DEPRECATED — Legacy estimation method. Use get_usdc_balance() instead.
     
-    Known deposit: $20.00 (verified on-chain, hardcoded — update if more deposited).
-    Redemptions are tracked in state/redemptions.json.
+    Kept only for reference. The computed approach was unreliable because
+    the trade log had $0.00 entries for early trades.
     """
     import requests
     from . import config
     
-    DEPOSIT = 20.00  # Total deposited — UPDATE IF MORE IS ADDED
+    DEPOSIT = 20.00
     REDEMPTIONS_FILE = os.path.join(config.STATE_DIR, "redemptions.json")
     
     try:
-        # Get all trades
         r = requests.get(
             f"{config.DATA_API}/trades",
             params={"user": config.WALLET, "limit": 200},
