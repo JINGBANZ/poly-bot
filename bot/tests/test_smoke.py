@@ -432,3 +432,32 @@ def test_no_raw_success_detection():
         f"Raw success detection found! Use execution.order_succeeded() instead.\n"
         f"Violations:\n" + "\n".join(violations)
     )
+
+
+def test_get_usdc_balance_uses_clob_api():
+    """Regression: get_usdc_balance must use CLOB API, not trade log estimation.
+    
+    Why: Legacy estimation was off by $7+ due to incomplete trade logs.
+    """
+    import inspect
+    from bot.execution import get_usdc_balance
+    source = inspect.getsource(get_usdc_balance)
+    assert "get_balance_allowance" in source, "get_usdc_balance must use CLOB get_balance_allowance API"
+    assert "DEPOSIT" not in source, "get_usdc_balance must not use hardcoded DEPOSIT estimation"
+    assert "AssetType.COLLATERAL" in source, "get_usdc_balance must query COLLATERAL asset type"
+
+
+def test_no_legacy_balance_calls():
+    """Ensure no module calls the deprecated legacy balance function."""
+    import os, re
+    bot_dir = os.path.join(os.path.dirname(__file__), "..")
+    violations = []
+    for fname in os.listdir(bot_dir):
+        if not fname.endswith(".py") or fname == "execution.py":
+            continue
+        path = os.path.join(bot_dir, fname)
+        with open(path) as f:
+            for i, line in enumerate(f, 1):
+                if "_get_usdc_balance_legacy" in line:
+                    violations.append(f"{fname}:{i}: {line.strip()}")
+    assert not violations, f"Legacy balance function called:\n" + "\n".join(violations)
