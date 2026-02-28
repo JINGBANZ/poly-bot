@@ -26,8 +26,7 @@ TOOLS.md
 HEARTBEAT.md
 MEMORY.md
 
-# Analysis notes & runtime data
-analysis/
+# Runtime data
 backtest/
 # Block all top-level .py files (code belongs in bot/ or scripts/)
 /*.py
