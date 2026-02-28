@@ -7,11 +7,11 @@ import re
 import json
 import time
 from . import config
-from .api import get_active_markets, get_book, best_ask, market_buy
+from .api import get_active_markets, get_book, best_ask
 from .guardrails import validate_entry
-from .execution import get_usdc_balance, check_circuit_breakers, log_trade
+from .execution import get_usdc_balance, check_circuit_breakers
 from .orderbook import analyze_orderbook
-from .alerts import write_alert
+# alerts handled by execution layer
 from .logger import log
 
 # Track which crossings we already acted on: (condition_id, direction) -> timestamp
@@ -266,25 +266,14 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
         return False
 
     # Execute!
-    result = market_buy(token_id, buy_amount)
-    if result and (result.get("success") or result.get("orderID")) and "error" not in result:
-        log(f"   ✅ Bought: {question[:50]} — {side} @ {entry_price:.2f}, ${buy_amount:.2f}")
-        write_alert(
-            f"🎯 THRESHOLD TRADE: {symbol} crossed ${threshold:,.0f}\n"
-            f"Market: {question}\n"
-            f"Side: {side} @ {entry_price:.2f} | Amt: ${buy_amount:.2f}\n"
-            f"Current {symbol}: ${current_price:,.2f}"
-        )
-        log_trade(
-            "BUY", question, ask_price, buy_amount / ask_price,
-            amount_usd=buy_amount, reason="THRESHOLD_CROSSING",
-            thesis=f"{symbol} at ${current_price:,.2f} crossed ${threshold:,.0f} threshold",
-            token_id=token_id,
-        )
-        return True
-    else:
-        log(f"   ❌ Buy failed: {result}")
-        return False
+    from .execution import execute_buy
+    result = execute_buy(
+        token_id, buy_amount, question,
+        reason="THRESHOLD_CROSSING",
+        thesis=f"{symbol} at ${current_price:,.2f} crossed ${threshold:,.0f} threshold",
+        entry_price=ask_price,
+    )
+    return result.get("success", False)
 
 
 def run_threshold_check(dry_run: bool = False, markets_cache: list | None = None) -> int:

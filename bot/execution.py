@@ -166,6 +166,71 @@ def get_stale_orders(max_age_hours: float = 24.0) -> list:
     return stale
 
 
+def order_succeeded(result) -> bool:
+    """Single source of truth for whether a Polymarket order succeeded.
+    
+    Handles all known API response formats:
+    - {"success": True} or {"orderID": "abc123"} → success
+    - None, {}, {"error": "..."}, {"errorMsg": "..."} → failure
+    """
+    if not result or not isinstance(result, dict):
+        return False
+    if "error" in result or "errorMsg" in result:
+        return False
+    return bool(result.get("success") or result.get("orderID"))
+
+
+def execute_buy(token_id: str, amount_usd: float, market_name: str,
+                reason: str, thesis: str = "", entry_price: float = 0) -> dict:
+    """Complete buy pipeline: balance → buy → log → alert. Returns result dict.
+    
+    Caller is responsible for orderbook checks before calling this.
+    This handles: market_buy → success check → log_trade → write_alert.
+    """
+    from .api import market_buy
+    from .alerts import write_alert
+
+    result = market_buy(token_id, amount_usd)
+    if order_succeeded(result):
+        shares = amount_usd / entry_price if entry_price > 0 else 0
+        log(f"  ✅ Bought: {market_name[:50]} — ${amount_usd:.2f}")
+        write_alert(f"🚀 BOUGHT: {market_name}\nAmt: ${amount_usd:.2f}\nReason: {reason}")
+        log_trade("BUY", market_name, entry_price, shares,
+                  amount_usd=amount_usd, reason=reason, thesis=thesis, token_id=token_id)
+        return {"success": True, "result": result}
+    else:
+        log(f"  ❌ Buy failed: {market_name[:50]}: {result}")
+        return {"success": False, "result": result}
+
+
+def execute_sell(token_id: str, size: float, market_name: str,
+                 reason: str, price: float = 0, pnl: float = 0) -> dict:
+    """Complete sell pipeline: sell → log → alert. Returns result dict.
+    
+    Args:
+        token_id: Token to sell
+        size: Number of shares to sell (used for logging)
+        market_name: Human-readable market name
+        reason: Why we're selling
+        price: Current bid price (for logging)
+        pnl: Profit/loss on this position
+    """
+    from .api import market_sell
+    from .alerts import write_alert
+
+    sell_amount = size * price if price > 0 else size
+    result = market_sell(token_id, sell_amount)
+    if order_succeeded(result):
+        log(f"  ✅ Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_amount:.2f}")
+        write_alert(f"✅ SOLD: {market_name}\n{size:.1f} shares for ~${sell_amount:.2f}\nReason: {reason}")
+        log_trade("SELL", market_name, price, size, profit=pnl, reason=reason, token_id=token_id)
+        return {"success": True, "result": result}
+    else:
+        log(f"  ❌ Sell failed: {market_name[:50]}: {result}")
+        write_alert(f"❌ Sell failed for {market_name}: {result}")
+        return {"success": False, "result": result}
+
+
 def check_circuit_breakers() -> tuple[bool, str]:
     """Check all circuit breakers. Returns (can_trade, reason)."""
     # Kill switch

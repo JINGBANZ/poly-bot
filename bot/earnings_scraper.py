@@ -556,8 +556,8 @@ def execute_earnings_signal(signal: dict, dry_run: bool = False) -> dict | None:
     For BEAT: buy YES tokens.
     For MISS: buy NO tokens (or sell YES if we hold them).
     """
-    from .api import market_buy, get_book, best_ask
-    from .execution import get_usdc_balance, log_trade
+    from .api import get_book, best_ask
+    from .execution import get_usdc_balance, execute_buy
     from .alerts import write_alert
     from .guardrails import validate_entry
 
@@ -605,19 +605,13 @@ def execute_earnings_signal(signal: dict, dry_run: bool = False) -> dict | None:
         write_alert(f"🔍 [DRY-RUN] {alert_msg}")
         return {"action": "DRY_RUN", "side": side, "amount": buy_amount}
 
-    result = market_buy(token_id, buy_amount)
-    if result and (result.get("success") or result.get("orderID")) and "error" not in result:
-        log(f"  ✅ EARNINGS TRADE: Bought {ticker} {side} — ${buy_amount:.2f}")
-        write_alert(f"🚀 {alert_msg}\nAmount: ${buy_amount:.2f}")
-        log_trade(
-            "BUY", signal["question"], ask_price,
-            buy_amount / ask_price if ask_price > 0 else 0,
-            amount_usd=buy_amount,
-            reason=f"EARNINGS_{verdict}",
-            token_id=token_id,
-        )
+    result = execute_buy(
+        token_id, buy_amount, signal["question"],
+        reason=f"EARNINGS_{verdict}",
+        thesis=f"{ticker} EPS ${eps:.2f} vs threshold ${threshold:.2f}",
+        entry_price=ask_price,
+    )
+    if result.get("success"):
         return {"action": "BOUGHT", "side": side, "amount": buy_amount}
     else:
-        log(f"  ❌ EARNINGS TRADE FAILED: {result}")
-        write_alert(f"❌ Earnings trade failed for {ticker}: {result}")
         return None

@@ -65,6 +65,47 @@ def test_log_trade_profit_none():
 
 # === Circuit breakers ===
 
+# === order_succeeded ===
+
+def test_order_succeeded_with_order_id():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"orderID": "abc123"}) is True
+
+def test_order_succeeded_with_success_flag():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"success": True}) is True
+
+def test_order_succeeded_with_both():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"success": True, "orderID": "abc"}) is True
+
+def test_order_succeeded_none():
+    from bot.execution import order_succeeded
+    assert order_succeeded(None) is False
+
+def test_order_succeeded_empty():
+    from bot.execution import order_succeeded
+    assert order_succeeded({}) is False
+
+def test_order_succeeded_error_key():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"error": "something", "orderID": "abc"}) is False
+
+def test_order_succeeded_error_msg_key():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"errorMsg": "bad", "success": True}) is False
+
+def test_order_succeeded_no_success_keys():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"status": "ok"}) is False
+
+def test_order_succeeded_success_false():
+    from bot.execution import order_succeeded
+    assert order_succeeded({"success": False}) is False
+
+
+# === Circuit breakers ===
+
 def test_circuit_breaker_kill_switch(tmp_path):
     kill_file = str(tmp_path / "KILL_SWITCH")
     open(kill_file, "w").close()
