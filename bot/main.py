@@ -500,6 +500,21 @@ def run_cycle(dry_run=False) -> dict:
 
                             log(f"  🎯 Target: {market.get('question', '?')[:60]} ({side} @ {entry_price:.0%})")
 
+                            # ── Signal Persistence Tracking (Israel/Iran lesson) ──
+                            try:
+                                from .signal_tracker import record_signal
+                                action_type = "TRADE" if is_trade else ("LEAN" if is_lean else "RESEARCH")
+                                alert = record_signal(
+                                    market.get("question", "unknown"),
+                                    action_type,
+                                    evidence=reason[:200]
+                                )
+                                if alert:
+                                    log(f"  🚨 PERSISTENT SIGNAL: {alert['signal_count']} TRADE flags!")
+                                    write_alert(alert["message"])
+                            except Exception as e:
+                                log(f"  ⚠️ Signal tracker error: {e}")
+
                             # ── Research Pipeline (for LEAN, RESEARCH, and TRADE) ──
                             from .research import research_opportunity
                             research_result = research_opportunity(

@@ -78,13 +78,13 @@ def test_check_position_hold():
     assert result.action == "HOLD"
 
 
-def test_check_position_stop_loss():
-    """Down 55% should trigger stop-loss."""
+def test_check_position_no_stop_loss():
+    """No stop-losses — Israel/Iran lesson. Down 55% should HOLD."""
     p = Position({"title": "Loser", "size": "10", "avgPrice": "0.40",
                   "curPrice": "0.18", "asset": "0xtoken"})
     assert p.pnl_pct <= -0.50
     result = check_position(p)
-    assert result.action == "SELL_SL"
+    assert result.action == "HOLD"
 
 
 def test_check_position_take_profit():
