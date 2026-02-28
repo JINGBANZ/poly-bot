@@ -19,6 +19,7 @@ Don't create `core/`, `daemons/`, `strategies/`, `signals/`, `services/`, etc. W
 
 ### 3. One module, one job.
 - `api.py` — ALL external API calls. No other module calls APIs directly.
+- `execution.py` — ALL trade execution. **See Rule 3b below.**
 - `config.py` — ALL configuration. No magic numbers in other files.
 - `guardrails.py` — ALL entry/exit validation logic.
 - `portfolio.py` — ALL position tracking and P&L.
@@ -28,8 +29,32 @@ Don't create `core/`, `daemons/`, `strategies/`, `signals/`, `services/`, etc. W
 
 If you need new functionality, it either fits in an existing module or gets a new file in `bot/` with a clear single purpose.
 
+### 3b. ALL trades go through execution.py — NO EXCEPTIONS.
+**NEVER call `api.market_buy()`, `api.market_sell()`, `api.place_limit_buy()`, or `api.place_limit_sell()` directly from any module other than `execution.py`.**
+
+Use these shared functions instead:
+```python
+from bot.execution import execute_buy, execute_sell, order_succeeded
+
+# Buying:
+result = execute_buy(token_id, amount_usd, market_name, reason, thesis, entry_price)
+
+# Selling:
+result = execute_sell(token_id, size, market_name, reason, price, pnl)
+
+# Checking if an order succeeded:
+if order_succeeded(result):
+    ...
+```
+
+**Why this exists:** 6 different modules each had their own copy of success detection logic (`"error" not in str(result)`). When the bug was found, it was fixed in 1 place but stayed broken in the other 7. Sells were logged as failures even when they succeeded. This cost us tracking on a +$3.86 profit trade (Israel/Iran). **NEVER AGAIN.**
+
 ### 4. No duplicate code.
-Before writing a new function, check if it already exists in `bot/api.py` or elsewhere. The previous codebase had 5 different functions to fetch positions. Now there's one: `api.get_positions()`.
+Before writing a new function, check if it already exists. Run:
+```bash
+grep -rn 'def YOUR_FUNCTION' bot/
+```
+The previous codebase had 5 different functions to fetch positions and 8 copies of order success detection. Now there's one of each.
 
 ### 5. No data hoarding.
 - No snapshot directories
@@ -106,3 +131,5 @@ python3 -c "from bot.guardrails import validate_entry; print(validate_entry(0.30
 5. **No stop-losses** — Watched positions drop 70%+ with nothing catching it. Now automated.
 6. **Sports betting without edge** — Bookmaker comparison is NOT edge. Lost on Cagliari, Tarleton, TheMongolz.
 7. **"This looks cheap" trades** — Vibes ≠ edge. Only trade with verifiable data.
+8. **Duplicate execution logic** — 8 copies of the same success check across 4 files. Bug fixed in 1, broken in 7. Now centralized in `execution.py`. NEVER write your own buy/sell/success logic.
+9. **Subagents building independently** — Each subagent built its own execution path without checking what existed. Always read existing modules BEFORE writing new code. `grep -rn 'def ' bot/execution.py` first.
