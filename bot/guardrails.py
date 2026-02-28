@@ -14,13 +14,14 @@ class GuardrailResult:
 
 
 def check_position(pos: Position) -> GuardrailResult:
-    """Check if a position should be sold (stop-loss or take-profit)."""
+    """Check if a position should be sold (take-profit or active sell).
+    
+    NO STOP-LOSSES. Learned from Israel/Iran: binary events are discontinuous.
+    Price decay ≠ thesis invalidation. We nearly sold Iran at -76% and would
+    have missed +218%. If the thesis is wrong, use the sell_list to exit manually.
+    """
     if not pos.entry or not pos.token_id:
         return GuardrailResult("SKIP", pos, "missing entry or token_id")
-
-    # Stop-loss
-    if pos.pnl_pct <= -config.STOP_LOSS_PCT:
-        return _try_sell(pos, "SL", f"down {pos.pnl_pct:.0%}")
 
     # Take-profit
     if pos.pnl_pct >= config.TAKE_PROFIT_PCT:
