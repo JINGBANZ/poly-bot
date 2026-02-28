@@ -377,3 +377,58 @@ def test_gov_monitor_no_false_matches():
 
     matches = match_to_markets(announcements, markets)
     assert len(matches) == 0
+
+
+def test_no_direct_market_buy_sell_outside_execution():
+    """Regression: NO module should call api.market_buy/sell directly.
+    All trades must go through execution.execute_buy/execute_sell.
+    
+    Why: 8 copies of success detection logic caused bugs in 7 places.
+    """
+    import os, re
+    bot_dir = os.path.join(os.path.dirname(__file__), "..")
+    violations = []
+    skip_files = {"api.py", "execution.py", "backtest.py"}
+    
+    for fname in os.listdir(bot_dir):
+        if not fname.endswith(".py") or fname in skip_files:
+            continue
+        path = os.path.join(bot_dir, fname)
+        with open(path) as f:
+            for i, line in enumerate(f, 1):
+                # Skip comments and strings
+                stripped = line.split("#")[0]
+                if re.search(r'\bmarket_buy\s*\(', stripped) or re.search(r'\bmarket_sell\s*\(', stripped):
+                    violations.append(f"{fname}:{i}: {line.strip()}")
+    
+    assert not violations, (
+        f"Direct market_buy/sell calls found outside execution.py!\n"
+        f"Use execution.execute_buy()/execute_sell() instead.\n"
+        f"Violations:\n" + "\n".join(violations)
+    )
+
+
+def test_no_raw_success_detection():
+    """Regression: NO module should check order success with string matching.
+    Use execution.order_succeeded() instead.
+    
+    Why: 'error' not in str(result) false-triggers on 'errorMsg' key.
+    """
+    import os
+    bot_dir = os.path.join(os.path.dirname(__file__), "..")
+    violations = []
+    skip_files = {"execution.py", "backtest.py"}
+    
+    for fname in os.listdir(bot_dir):
+        if not fname.endswith(".py") or fname in skip_files:
+            continue
+        path = os.path.join(bot_dir, fname)
+        with open(path) as f:
+            for i, line in enumerate(f, 1):
+                if '"error" not in str(' in line or "'error' not in str(" in line:
+                    violations.append(f"{fname}:{i}: {line.strip()}")
+    
+    assert not violations, (
+        f"Raw success detection found! Use execution.order_succeeded() instead.\n"
+        f"Violations:\n" + "\n".join(violations)
+    )
