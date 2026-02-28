@@ -240,7 +240,7 @@ def run_cycle(dry_run=False) -> dict:
                 from .api import market_sell
                 sell_amount = pos.size * pos.current
                 result = market_sell(pos.token_id, sell_amount)
-                if result and "error" not in str(result):
+                if result and (result.get("success") or result.get("orderID")) and "error" not in result:
                     log(f"  ✅ Sold: {pos.title} — {pos.size:.1f} shares for ~${sell_amount:.2f}")
                     write_alert(f"✅ SOLD: {pos.title} — {pos.size:.1f} shares for ~${sell_amount:.2f}")
                     log_trade("SELL", pos.title, bid_price, pos.size, profit=pos.pnl, reason=gr.action, token_id=pos.token_id)
@@ -299,7 +299,7 @@ def run_cycle(dry_run=False) -> dict:
                     if buy_amount >= 0.50:
                         from .api import market_buy
                         result = market_buy(ws["token_id"], buy_amount)
-                        if result and "error" not in str(result):
+                        if result and (result.get("success") or result.get("orderID")) and "error" not in result:
                             log(f"  🐋✅ Whale follow: bought ${buy_amount:.2f} of {ws['title'][:40]}")
                             _write_alert(f"🐋✅ Whale follow bought: {ws['title']}\n{ws['side']} ${buy_amount:.2f}")
                             log_trade("BUY", ws["title"], ws["entry_price"], buy_amount/ws["entry_price"],
@@ -380,7 +380,7 @@ def run_cycle(dry_run=False) -> dict:
                             from .api import market_sell
                             sell_amount = pos.size * pos.current
                             result = market_sell(pos.token_id, sell_amount)
-                            if result and "error" not in str(result):
+                            if result and (result.get("success") or result.get("orderID")) and "error" not in result:
                                 log(f"  ✅ LLM sold: {pos.title} for ~${sell_amount:.2f}")
                                 write_alert(f"✅ LLM SOLD: {pos.title} for ~${sell_amount:.2f}")
                                 log_trade("SELL", pos.title, bid_price, pos.size, profit=pos.pnl, reason="LLM_SELL", thesis=analysis, token_id=pos.token_id)
@@ -607,7 +607,7 @@ def run_cycle(dry_run=False) -> dict:
                             if not dry_run:
                                 from .api import market_buy
                                 result = market_buy(token_id, buy_amount)
-                                if result and "error" not in str(result):
+                                if result and (result.get("success") or result.get("orderID")) and "error" not in result:
                                     log(f"  ✅ Bought: {market.get('question')[:50]} — {side} @ {entry_price:.2f}, ${buy_amount:.2f}")
                                     write_alert(f"🚀 ENTERED: {market.get('question')}\nSide: {side} @ {entry_price:.2f}\nAmt: ${buy_amount:.2f}\n\n{thesis}")
                                     log_trade("BUY", market.get('question'), ask_price, buy_amount/ask_price, amount_usd=buy_amount, reason="LLM_TRADE", thesis=thesis, token_id=token_id)
@@ -706,7 +706,7 @@ def run_cycle(dry_run=False) -> dict:
 
                             from .api import market_buy
                             result = market_buy(token_id, buy_amount)
-                            if result and "error" not in str(result):
+                            if result and (result.get("success") or result.get("orderID")) and "error" not in result:
                                 log(f"  ✅ Deep value bought: {m.get('question')[:50]} — {side} @ {price:.2f}, ${buy_amount:.2f}")
                                 write_alert(f"🚀 DEEP VALUE ENTERED: {m.get('question')}\nSide: {side} @ {price:.2f}\nAmt: ${buy_amount:.2f}\n\n{thesis[:300]}")
                                 log_trade("BUY", m.get('question'), ask_price, buy_amount/ask_price, amount_usd=buy_amount, reason="DEEP_VALUE_TRADE", thesis=thesis, token_id=token_id)
