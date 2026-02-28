@@ -7,7 +7,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/.openclaw/workspace/polymarket-bot
 EnvironmentFile=/home/ubuntu/.openclaw/.polymarket-env
-ExecStartPre=/bin/bash -c 'cd /home/ubuntu/.openclaw/workspace/polymarket-bot && source polymarket-venv/bin/activate && python -m pytest bot/tests/test_smoke.py -q --tb=line'
+ExecStartPre=/bin/bash -c 'cd /home/ubuntu/.openclaw/workspace/polymarket-bot && source polymarket-venv/bin/activate && python -m pytest bot/tests/ -q --tb=line'
 ExecStart=/usr/bin/python3 -m bot.main
 Restart=on-failure
 RestartSec=30
