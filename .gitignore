@@ -32,3 +32,4 @@ backtest/
 /*.py
 state/
 scripts/
+.github/workflows/

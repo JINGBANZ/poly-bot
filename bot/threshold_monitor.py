@@ -3,6 +3,7 @@
 Fast path: no LLM calls. Pure price comparison → execution.
 """
 
+import os
 import re
 import json
 import time
@@ -17,6 +18,80 @@ from .logger import log
 # Track which crossings we already acted on: (condition_id, direction) -> timestamp
 _acted_crossings = {}  # key -> ts
 _CROSSING_COOLDOWN = 3600  # Don't re-act on same crossing for 1 hour
+
+# Orderbook rejection cooldown: 6 hours minimum before retrying
+_REJECTION_COOLDOWN = 6 * 3600
+# Auto-blacklist after this many consecutive rejections
+_MAX_CONSECUTIVE_REJECTIONS = 3
+
+_COOLDOWN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "state", "threshold_cooldowns.json")
+
+# Persistent cooldown state: {key_str: {"until": timestamp, "rejections": count}}
+_cooldown_state = {}
+
+
+def _load_cooldowns():
+    """Load persistent cooldown state from disk."""
+    global _cooldown_state
+    try:
+        with open(_COOLDOWN_FILE, "r") as f:
+            _cooldown_state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        _cooldown_state = {}
+
+
+def _save_cooldowns():
+    """Save cooldown state to disk."""
+    try:
+        with open(_COOLDOWN_FILE, "w") as f:
+            json.dump(_cooldown_state, f, indent=2)
+    except Exception as e:
+        log(f"⚠️ Failed to save threshold cooldowns: {e}")
+
+
+def _cooldown_key(condition_id: str, direction: str) -> str:
+    """Create a string key for cooldown state."""
+    return f"{condition_id}:{direction}"
+
+
+def _is_cooled_down(condition_id: str, direction: str) -> bool:
+    """Check if a market is in cooldown (rejected or blacklisted)."""
+    key = _cooldown_key(condition_id, direction)
+    state = _cooldown_state.get(key)
+    if not state:
+        return False
+    if state.get("blacklisted"):
+        return True  # Permanently blocked
+    return time.time() < state.get("until", 0)
+
+
+def _record_rejection(condition_id: str, direction: str, reason: str):
+    """Record an orderbook rejection and apply cooldown."""
+    key = _cooldown_key(condition_id, direction)
+    state = _cooldown_state.get(key, {"rejections": 0})
+    state["rejections"] = state.get("rejections", 0) + 1
+    state["until"] = time.time() + _REJECTION_COOLDOWN
+    state["last_reason"] = reason
+
+    if state["rejections"] >= _MAX_CONSECUTIVE_REJECTIONS:
+        state["blacklisted"] = True
+        log(f"   🚫 Auto-blacklisted after {state['rejections']} consecutive rejections: {reason}")
+
+    _cooldown_state[key] = state
+    _save_cooldowns()
+
+
+def _clear_rejection(condition_id: str, direction: str):
+    """Clear rejection count on successful trade."""
+    key = _cooldown_key(condition_id, direction)
+    if key in _cooldown_state:
+        del _cooldown_state[key]
+        _save_cooldowns()
+
+
+# Load cooldowns on module import
+_load_cooldowns()
 
 # Patterns to match crypto threshold markets
 # Examples:
@@ -165,7 +240,11 @@ def check_crossings(prices: dict, threshold_markets: list) -> list[dict]:
         if not crossed:
             continue
 
-        # Cooldown check
+        # Persistent cooldown check (rejection/blacklist)
+        if _is_cooled_down(tm["condition_id"], direction):
+            continue
+
+        # In-memory cooldown check (recent action)
         key = (tm["condition_id"], direction)
         last_acted = _acted_crossings.get(key, 0)
         if (now - last_acted) < _CROSSING_COOLDOWN:
@@ -253,12 +332,16 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
     book = get_book(token_id)
     ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
     if not ob_analysis["tradeable"]:
-        log(f"   🛑 Orderbook: {ob_analysis['reject_reason']}")
+        reason = ob_analysis['reject_reason']
+        log(f"   🛑 Orderbook: {reason}")
+        _record_rejection(condition_id, crossing["direction"], reason)
         return False
 
     ask_price, ask_depth = best_ask(book)
     if ask_depth < buy_amount:
-        log(f"   🛑 Low ask depth: ${ask_depth:.2f}")
+        reason = f"Low ask depth: ${ask_depth:.2f}"
+        log(f"   🛑 {reason}")
+        _record_rejection(condition_id, crossing["direction"], reason)
         return False
 
     if dry_run:
@@ -273,7 +356,10 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
         thesis=f"{symbol} at ${current_price:,.2f} crossed ${threshold:,.0f} threshold",
         entry_price=ask_price,
     )
-    return result.get("success", False)
+    success = result.get("success", False)
+    if success:
+        _clear_rejection(condition_id, crossing["direction"])
+    return success
 
 
 def run_threshold_check(dry_run: bool = False, markets_cache: list | None = None) -> int:
