@@ -461,3 +461,44 @@ def test_no_legacy_balance_calls():
                 if "_get_usdc_balance_legacy" in line:
                     violations.append(f"{fname}:{i}: {line.strip()}")
     assert not violations, f"Legacy balance function called:\n" + "\n".join(violations)
+
+
+def test_threshold_cooldown_and_blacklist():
+    """Phase 94: Threshold monitor applies cooldown on orderbook rejection and auto-blacklists."""
+    import time
+    from bot import threshold_monitor as tm
+
+    # Reset state
+    tm._cooldown_state = {}
+
+    cid, direction = "test-cond-123", "above"
+
+    # Initially not cooled down
+    assert not tm._is_cooled_down(cid, direction)
+
+    # Record a rejection → should be cooled down
+    tm._record_rejection(cid, direction, "spread too wide: 199.6%")
+    assert tm._is_cooled_down(cid, direction)
+    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 1
+    assert not tm._cooldown_state[tm._cooldown_key(cid, direction)].get("blacklisted")
+
+    # Second rejection
+    tm._cooldown_state[tm._cooldown_key(cid, direction)]["until"] = 0  # expire cooldown
+    tm._record_rejection(cid, direction, "spread too wide: 199.6%")
+    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 2
+    assert not tm._cooldown_state[tm._cooldown_key(cid, direction)].get("blacklisted")
+
+    # Third rejection → auto-blacklisted
+    tm._cooldown_state[tm._cooldown_key(cid, direction)]["until"] = 0
+    tm._record_rejection(cid, direction, "spread too wide: 199.6%")
+    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 3
+    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["blacklisted"] is True
+    assert tm._is_cooled_down(cid, direction)  # blacklisted = permanent cooldown
+
+    # Clear on success
+    tm._clear_rejection(cid, direction)
+    assert not tm._is_cooled_down(cid, direction)
+
+    # Cooldown constants
+    assert tm._REJECTION_COOLDOWN >= 6 * 3600
+    assert tm._MAX_CONSECUTIVE_REJECTIONS == 3
