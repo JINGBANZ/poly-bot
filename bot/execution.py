@@ -211,6 +211,13 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
     from .api import market_buy
     from .alerts import write_alert
 
+    # LAST-RESORT STALE PRICE GUARD: Never buy above 85¢ unless explicitly
+    # flagged. If you're paying 85¢+ the expected edge is <15¢ — not worth
+    # the risk. Learned from Khamenei buy at 99.7¢.
+    if entry_price > 0.85:
+        log(f"  🛑 EXECUTION GUARD: entry_price {entry_price:.2f} > 85¢ ceiling. Refusing buy.")
+        return {"success": False, "error": f"Price {entry_price:.2f} exceeds 85¢ safety ceiling"}
+
     result = market_buy(token_id, amount_usd)
     if order_succeeded(result):
         shares = amount_usd / entry_price if entry_price > 0 else 0

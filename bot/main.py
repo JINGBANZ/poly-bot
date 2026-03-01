@@ -567,6 +567,11 @@ def run_cycle(dry_run=False) -> dict:
                                 log(f"  🛑 Guardrail: {msg}")
                                 continue
 
+                            # STALE PRICE GUARD: Re-fetch live ask before committing
+                            # Gamma API outcomePrices can be hours stale. The live
+                            # orderbook is the ONLY source of truth for current price.
+                            # Learned from Khamenei buy at 99.7¢ when Gamma said 15¢.
+
                             usdc_balance = get_usdc_balance()
                             buy_amount = min(config.MAX_POSITION_USD, usdc_balance)
                             if buy_amount < 1.0:
@@ -598,6 +603,13 @@ def run_cycle(dry_run=False) -> dict:
                             ask_price, ask_depth = best_ask(book)
                             if ask_depth < buy_amount:
                                 log(f"  🛑 Low ask depth: ${ask_depth:.2f}")
+                                continue
+
+                            # STALE PRICE GUARD: Abort if live ask is >2x the Gamma price
+                            # Khamenei lesson: Gamma said 15¢, live ask was 99.7¢
+                            if ask_price > entry_price * 2.0 and ask_price > 0.50:
+                                log(f"  🛑 STALE PRICE: Gamma={entry_price:.2f} but live ask={ask_price:.2f}. Aborting — price moved.")
+                                write_alert(f"⚠️ STALE PRICE detected: {market.get('question','?')[:60]}\nGamma: {entry_price:.0%} → Live: {ask_price:.0%}. Trade aborted.")
                                 continue
 
                             if not dry_run:
@@ -692,6 +704,12 @@ def run_cycle(dry_run=False) -> dict:
                             ask_price, ask_depth = best_ask(book)
                             if ask_depth < buy_amount:
                                 log(f"  🛑 Deep value: low ask depth ${ask_depth:.2f}")
+                                continue
+
+                            # STALE PRICE GUARD (deep value path)
+                            if ask_price > price * 2.0 and ask_price > 0.50:
+                                log(f"  🛑 STALE PRICE (deep): Gamma={price:.2f} but live ask={ask_price:.2f}. Aborting.")
+                                write_alert(f"⚠️ STALE PRICE: {m.get('question','?')[:60]}\nGamma: {price:.0%} → Live: {ask_price:.0%}. Aborted.")
                                 continue
 
                             result = execute_buy(token_id, buy_amount, m.get('question', ''),
