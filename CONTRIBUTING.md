@@ -29,7 +29,25 @@ Don't create `core/`, `daemons/`, `strategies/`, `signals/`, `services/`, etc. W
 
 If you need new functionality, it either fits in an existing module or gets a new file in `bot/` with a clear single purpose.
 
-### 3b. ALL trades go through execution.py — NO EXCEPTIONS.
+### 3b. ALL trades go through the trade queue — NO EXCEPTIONS.
+**The AI assistant, subagents, and manual scripts MUST NOT call `execute_buy()` directly.**
+Instead, submit a trade request:
+```python
+from bot.trade_queue import submit_request
+result = submit_request(
+    market_slug="some-market-slug",
+    side="YES",
+    amount_usd=2.0,
+    thesis="At least 20 chars explaining why...",
+    max_price=0.40,  # Optional: reject if live ask exceeds this
+)
+```
+The bot's main loop picks up pending requests and processes them with ALL guardrails:
+orderbook check, stale price guard, 85¢ ceiling, volume minimum, balance check.
+
+**Why this exists:** The AI bought Khamenei at 99.7¢ after the bot correctly rejected it at 199.6% spread. The bot was right. Manual override was wrong. $4 locked for $0.002 profit. **NEVER AGAIN.**
+
+### 3c. ALL trades go through execution.py — NO EXCEPTIONS.
 **NEVER call `api.market_buy()`, `api.market_sell()`, `api.place_limit_buy()`, or `api.place_limit_sell()` directly from any module other than `execution.py`.**
 
 Use these shared functions instead:
@@ -121,6 +139,19 @@ python3 -m bot.main --once --dry-run
 python3 -c "from bot.api import get_positions; print(get_positions())"
 python3 -c "from bot.guardrails import validate_entry; print(validate_entry(0.30, 100000))"
 ```
+
+## Pre-Action Gate (Mandatory for ALL phases and builds)
+
+Before spawning a phase, building a module, or starting any non-trivial work, WRITE a justification:
+
+1. **What am I about to do?** (1 sentence)
+2. **Expected dollar impact?** (How does this make money or prevent losses?)
+3. **Evidence it will work?** (Not vibes — data, backtests, or prior results)
+4. **Simplest way to achieve it?** (If it takes >100 lines, question why)
+
+If you can't answer #2 and #3, **don't do it.** "No action" is a valid and often correct decision.
+
+**Why this exists:** 93 phases, 27 modules, $6 account. 82% of phases were busywork that never produced a trade. Activity ≠ progress. **THINK BEFORE BUILDING.**
 
 ## Lessons Learned (Don't Repeat These)
 

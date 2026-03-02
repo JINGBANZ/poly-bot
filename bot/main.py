@@ -142,6 +142,117 @@ def manage_open_orders(dry_run=False):
             remove_order(oid)
 
 
+def _process_trade_request(req: dict, mark_processed):
+    """Process a single trade request from the queue with full guardrails.
+    
+    This is the ONLY path for manual/AI-initiated trades. Everything goes
+    through the same checks as the bot's own trades: orderbook, stale price,
+    85¢ ceiling, balance, volume minimum.
+    """
+    import json as _json
+    from .api import get_book, best_ask, get_positions
+    from .orderbook import analyze_orderbook
+    from .guardrails import validate_entry
+    from .execution import execute_buy, get_usdc_balance
+    from .alerts import write_alert
+
+    slug = req["market_slug"]
+    side = req["side"]
+    amount = req["amount_usd"]
+    max_price = req.get("max_price", 0)
+
+    log(f"  📋 Processing trade request: {slug[:50]} ({side} ${amount:.2f})")
+
+    # Find market by slug or question text
+    import requests as _requests
+    resp = _requests.get("https://gamma-api.polymarket.com/markets", params={
+        "slug": slug, "limit": 1, "active": "true", "closed": "false"
+    }, timeout=10)
+    markets = resp.json() if resp.ok else []
+
+    # Fallback: search by question text
+    if not markets:
+        resp = _requests.get("https://gamma-api.polymarket.com/markets", params={
+            "limit": 20, "active": "true", "closed": "false"
+        }, timeout=10)
+        if resp.ok:
+            markets = [m for m in resp.json() if slug.lower() in m.get("question", "").lower()]
+
+    if not markets:
+        mark_processed(req["id"], "rejected", f"Market not found: {slug}")
+        log(f"  🛑 Trade request rejected: market not found")
+        return
+
+    market = markets[0]
+    vol24 = float(market.get("volume24hr", 0) or 0)
+
+    # Entry validation (volume, value zone)
+    prices = _json.loads(market.get("outcomePrices", "[]"))
+    gamma_price = float(prices[0]) if side == "YES" and prices else (1 - float(prices[0])) if prices else 0.5
+    valid, msg = validate_entry(gamma_price, vol24)
+    if not valid:
+        mark_processed(req["id"], "rejected", msg)
+        log(f"  🛑 Trade request guardrail: {msg}")
+        return
+
+    # Get token ID
+    clob_ids = market.get("clobTokenIds", "[]")
+    if isinstance(clob_ids, str):
+        clob_ids = _json.loads(clob_ids)
+    token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
+    if not token_id:
+        mark_processed(req["id"], "rejected", "No token ID found")
+        return
+
+    # Orderbook check
+    book = get_book(token_id)
+    ob = analyze_orderbook(book, order_size_usd=amount, side="BUY")
+    if not ob["tradeable"]:
+        mark_processed(req["id"], "rejected", f"Orderbook: {ob['reject_reason']}")
+        log(f"  🛑 Trade request orderbook reject: {ob['reject_reason']}")
+        return
+
+    ask_price, ask_depth = best_ask(book)
+
+    # Stale price guard
+    if ask_price > gamma_price * 2.0 and ask_price > 0.50:
+        mark_processed(req["id"], "rejected", f"Stale price: Gamma={gamma_price:.2f} live={ask_price:.2f}")
+        log(f"  🛑 Trade request stale price: Gamma={gamma_price:.2f} live={ask_price:.2f}")
+        return
+
+    # Max price check
+    if max_price > 0 and ask_price > max_price:
+        mark_processed(req["id"], "rejected", f"Price {ask_price:.2f} > max {max_price:.2f}")
+        log(f"  🛑 Trade request max price exceeded: {ask_price:.2f} > {max_price:.2f}")
+        return
+
+    # Depth check
+    if ask_depth < amount:
+        mark_processed(req["id"], "rejected", f"Low depth: ${ask_depth:.2f}")
+        log(f"  🛑 Trade request low depth: ${ask_depth:.2f}")
+        return
+
+    # Balance check
+    balance = get_usdc_balance()
+    buy_amount = min(amount, balance)
+    if buy_amount < 1.0:
+        mark_processed(req["id"], "rejected", f"Insufficient balance: ${balance:.2f}")
+        log(f"  🛑 Trade request: insufficient balance ${balance:.2f}")
+        return
+
+    # Execute through the standard pipeline (includes 85¢ ceiling)
+    result = execute_buy(token_id, buy_amount, market.get("question", slug),
+                        reason=req.get("reason", "QUEUE_REQUEST"),
+                        thesis=req["thesis"], entry_price=ask_price)
+
+    if result.get("success"):
+        mark_processed(req["id"], "filled", f"Bought @ {ask_price:.2f}")
+        write_alert(f"📋 Trade request FILLED: {market.get('question','?')[:60]}\n{side} @ {ask_price:.2f}, ${buy_amount:.2f}")
+    else:
+        mark_processed(req["id"], "rejected", f"Execution failed: {result}")
+        log(f"  ❌ Trade request execution failed: {result}")
+
+
 def run_cycle(dry_run=False) -> dict:
     """Run one monitoring cycle. Returns summary dict."""
     _cycle_start = time.time()
@@ -173,6 +284,24 @@ def run_cycle(dry_run=False) -> dict:
         manage_open_orders(dry_run=dry_run)
     except Exception as e:
         log(f"⚠️ Order management: {e}")
+
+    # 0c. Process trade request queue
+    try:
+        from .trade_queue import get_pending, mark_processed, expire_old_requests
+        expire_old_requests()
+        pending = get_pending()
+        for req in pending:
+            if dry_run:
+                mark_processed(req["id"], "skipped", "Circuit breaker active")
+                continue
+            try:
+                _process_trade_request(req, mark_processed)
+            except Exception as e:
+                log(f"  ⚠️ Trade request error: {e}")
+                mark_processed(req["id"], "error", str(e))
+    except Exception as e:
+        if verbose:
+            log(f"⚠️ Trade queue: {e}")
 
     # 1. Fetch positions
     raw = get_positions()
