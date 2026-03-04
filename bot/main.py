@@ -312,6 +312,8 @@ def run_cycle(dry_run=False) -> dict:
 
     portfolio = Portfolio.from_api(raw)
 
+    resolved_slugs = []  # Track resolved positions for removal after loop
+
     # Log portfolio summary only on verbose cycles
     if verbose:
         log("─" * 50)
@@ -341,6 +343,7 @@ def run_cycle(dry_run=False) -> dict:
             except Exception as e:
                 log(f"  ⚠️ Post-mortem failed: {e}")
 
+            resolved_slugs.append(pos.slug)
             continue
 
         # Guardrail check
@@ -369,6 +372,12 @@ def run_cycle(dry_run=False) -> dict:
             if not dry_run:
                 result = execute_sell(pos.token_id, pos.size, pos.title,
                                      reason=gr.action, price=pos.current, pnl=pos.pnl)
+
+    # Remove resolved positions and save
+    if resolved_slugs:
+        portfolio.positions = [p for p in portfolio.positions if p.slug not in resolved_slugs]
+        portfolio.save()
+        log(f"  🗑️ Removed {len(resolved_slugs)} resolved position(s) from portfolio")
 
     # 2b. Government feed monitoring (every cycle — feeds update infrequently)
     try:
