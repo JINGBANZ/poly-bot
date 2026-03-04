@@ -312,6 +312,17 @@ def run_cycle(dry_run=False) -> dict:
 
     portfolio = Portfolio.from_api(raw)
 
+    # Load already-resolved slugs cache to avoid repeated post-mortems
+    _resolved_cache_path = os.path.join(config.STATE_DIR, "resolved_cache.json")
+    try:
+        with open(_resolved_cache_path) as _f:
+            _already_resolved = set(json.load(_f))
+    except Exception:
+        _already_resolved = set()
+
+    # Filter out already-resolved positions before processing
+    portfolio.positions = [p for p in portfolio.positions if p.slug not in _already_resolved]
+
     resolved_slugs = []  # Track resolved positions for removal after loop
 
     # Log portfolio summary only on verbose cycles
@@ -378,6 +389,13 @@ def run_cycle(dry_run=False) -> dict:
         portfolio.positions = [p for p in portfolio.positions if p.slug not in resolved_slugs]
         portfolio.save()
         log(f"  🗑️ Removed {len(resolved_slugs)} resolved position(s) from portfolio")
+        # Persist resolved slugs cache to prevent repeated post-mortems
+        _already_resolved.update(resolved_slugs)
+        try:
+            with open(_resolved_cache_path, "w") as _f:
+                json.dump(list(_already_resolved), _f)
+        except Exception:
+            pass
 
     # 2b. Government feed monitoring (every cycle — feeds update infrequently)
     try:
