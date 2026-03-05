@@ -53,6 +53,27 @@ def _request(method: str, endpoint: str, **kwargs) -> dict:
 
 # --- Issues ---
 
+def get_issue(number: int) -> dict:
+    """Get a single issue by number."""
+    return _request("get", f"/issues/{number}")
+
+
+def get_pr(pr_number: int) -> dict:
+    """Get a single PR by number."""
+    return _request("get", f"/pulls/{pr_number}")
+
+
+def get_pr_diff(pr_number: int) -> str:
+    """Get the diff for a PR."""
+    token = _get_token()
+    url = f"{API_BASE}/repos/{REPO}/pulls/{pr_number}"
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3.diff"}
+    import requests as req
+    resp = req.get(url, headers=headers, timeout=30)
+    resp.raise_for_status()
+    return resp.text
+
+
 def list_issues(labels: Optional[str] = None, state: str = "open") -> list:
     """List repository issues. labels is a comma-separated string."""
     params = {"state": state, "per_page": 50, "sort": "created", "direction": "asc"}
