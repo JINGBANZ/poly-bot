@@ -97,7 +97,7 @@ def get_redeemable_positions() -> list:
 
     try:
         r = requests.get(
-            f"https://data-api.polymarket.com/positions?user={funder}",
+            f"https://data-api.polymarket.com/positions?user={funder}&sizeThreshold=0",
             timeout=15
         )
         r.raise_for_status()
