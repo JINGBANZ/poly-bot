@@ -1,0 +1,12 @@
+{
+  "name": "polymarket-bot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "prepare": "husky",
+    "test": "cd /home/ubuntu/.openclaw/workspace/polymarket-bot && source polymarket-venv/bin/activate && python -m pytest bot/tests/test_smoke.py -q --tb=line"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

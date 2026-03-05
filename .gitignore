@@ -32,4 +32,9 @@ backtest/
 /*.py
 state/
 scripts/
-.github/workflows/
+
+# Evolution runtime state (track code, not state files)
+evolution/state/*.json
+evolution/inbox/*
+!evolution/inbox/.gitkeep
+!evolution/state/.gitkeep
