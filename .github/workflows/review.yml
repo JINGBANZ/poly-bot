@@ -17,7 +17,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install py-clob-client requests feedparser duckduckgo-search pytest
+          pip install py-clob-client requests feedparser duckduckgo-search ddgs pytest
 
       - name: Run tests
         run: |
