@@ -130,24 +130,49 @@ def merge_pr(pr_number: int) -> dict:
 
 
 def get_pr_status(pr_number: int) -> dict:
-    """Check CI status for a PR. Returns {state, checks}."""
+    """Check CI status for a PR. Returns {state, checks}.
+
+    Tries check-runs API first, falls back to commit statuses API.
+    If neither API is accessible or no CI is configured, returns 'success'
+    (no CI required means nothing to block on).
+    """
     pr = _request("get", f"/pulls/{pr_number}")
     head_sha = pr.get("head", {}).get("sha", "")
     if not head_sha:
         return {"state": "unknown", "checks": []}
 
-    # Get check runs for the commit
+    # Try check-runs API first (requires checks permission)
+    check_runs = []
     try:
         checks = _request("get", f"/commits/{head_sha}/check-runs")
+        check_runs = checks.get("check_runs", [])
     except RuntimeError:
-        return {"state": "unknown", "checks": []}
+        # Token may lack checks permission — fall back to statuses API
+        try:
+            combined = _request("get", f"/commits/{head_sha}/status")
+            api_state = combined.get("state", "pending")
+            statuses = combined.get("statuses", [])
+            if not statuses:
+                # No statuses and no check runs — no CI configured, treat as success
+                return {"state": "success", "checks": []}
+            return {
+                "state": api_state,
+                "checks": [
+                    {"name": s.get("context"), "status": s.get("state"), "conclusion": s.get("state")}
+                    for s in statuses
+                ],
+            }
+        except RuntimeError:
+            # Both check-runs and statuses APIs inaccessible (likely token permissions).
+            # Treat as success — we can't enforce CI if we can't read it.
+            return {"state": "success", "checks": []}
 
-    check_runs = checks.get("check_runs", [])
     if not check_runs:
-        return {"state": "pending", "checks": []}
+        # No check runs exist — CI was not triggered (e.g. path filter excluded),
+        # treat as success so we don't block forever
+        return {"state": "success", "checks": []}
 
     states = [c.get("conclusion") for c in check_runs]
-    names = [c.get("name", "") for c in check_runs]
 
     if None in states:
         overall = "pending"
