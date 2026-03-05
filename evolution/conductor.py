@@ -9,6 +9,7 @@ Usage:
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -79,6 +80,85 @@ def _now() -> float:
 def _output(result: dict):
     """Output JSON result to stdout for the cron wrapper."""
     print(json.dumps(result))
+
+
+# --- Acceptance criteria helpers ---
+
+def extract_acceptance_criteria(issue_body: str) -> list[str]:
+    """Extract acceptance criteria from issue body (checkbox items under 'Acceptance Criteria')."""
+    if not issue_body:
+        return []
+    criteria = []
+    in_section = False
+    for line in issue_body.splitlines():
+        stripped = line.strip()
+        # Detect the acceptance criteria section header
+        if re.match(r'^#+\s*acceptance\s+criteria', stripped, re.IGNORECASE):
+            in_section = True
+            continue
+        # Stop at next header
+        if in_section and re.match(r'^#+\s', stripped):
+            break
+        # Collect checkbox items in the section
+        if in_section:
+            m = re.match(r'^-\s*\[[ x]\]\s*(.+)', stripped)
+            if m:
+                criteria.append(m.group(1).strip())
+    return criteria
+
+
+def check_criteria_in_pr(pr_number: int, issue_number: int) -> dict:
+    """Check whether the PR (body + commit messages) addresses the issue's acceptance criteria.
+
+    Returns {"passed": bool, "missing": [...], "criteria": [...]}.
+    """
+    try:
+        issue = github_client.get_issue(issue_number)
+    except Exception as e:
+        _log(f"Warning: couldn't fetch issue #{issue_number}: {e}")
+        return {"passed": True, "missing": [], "criteria": []}
+
+    criteria = extract_acceptance_criteria(issue.get("body", ""))
+    if not criteria:
+        # No acceptance criteria defined — nothing to enforce
+        return {"passed": True, "missing": [], "criteria": []}
+
+    # Gather text to search: PR body + commit messages
+    search_text = ""
+    try:
+        pr = github_client.get_pr(pr_number)
+        search_text += (pr.get("body", "") or "") + "\n"
+    except Exception:
+        pass
+    try:
+        branch_commits = github_client.get_branch_commits(
+            f"improve/{issue_number}", since_sha=None
+        )
+        for c in branch_commits[:20]:
+            search_text += (c.get("commit", {}).get("message", "") or "") + "\n"
+    except Exception:
+        pass
+
+    search_lower = search_text.lower()
+
+    # Check for the verification block
+    has_verification = "criteria verification" in search_lower
+
+    if not has_verification:
+        return {"passed": False, "missing": criteria, "criteria": criteria}
+
+    # Check each criterion is roughly addressed (keyword match)
+    missing = []
+    for criterion in criteria:
+        # Extract key words (3+ chars) from the criterion
+        words = [w.lower() for w in re.findall(r'[a-zA-Z_]\w{2,}', criterion)]
+        # Require at least half of meaningful words to appear
+        if words:
+            matched = sum(1 for w in words if w in search_lower)
+            if matched < max(1, len(words) // 3):
+                missing.append(criterion)
+
+    return {"passed": len(missing) == 0, "missing": missing, "criteria": criteria}
 
 
 # --- Phase handlers ---
@@ -265,11 +345,36 @@ def _handle_reviewing(state: dict) -> dict:
             except Exception as e:
                 _log(f"Warning: couldn't check issue labels: {e}")
 
-        # CI passed and backtest check passed — request LLM review
-        # The LLM review is done by the conductor (which runs as a Claude subagent)
-        # It posts the review as a PR comment. The actual review happens in the
-        # cron job wrapper that calls conductor.py, since the conductor outputs
-        # the diff for review.
+        # Check acceptance criteria before proceeding
+        issue_number_for_check = state.get("issue_number")
+        if issue_number_for_check:
+            criteria_result = check_criteria_in_pr(pr_number, issue_number_for_check)
+            if not criteria_result["passed"]:
+                missing = criteria_result["missing"]
+                _log(f"PR #{pr_number} missing acceptance criteria: {missing}")
+                try:
+                    github_client.post_comment(
+                        pr_number,
+                        "⚠️ **Acceptance criteria not met.** The following criteria "
+                        "are missing or not addressed in the PR:\n\n"
+                        + "\n".join(f"- [ ] {c}" for c in missing)
+                        + "\n\nPlease include a `Criteria Verification` section in "
+                        "your commit message showing how each criterion is met.",
+                    )
+                except Exception as e:
+                    _log(f"Failed to post criteria comment: {e}")
+
+                state["phase"] = "REVISING"
+                state["revision_count"] = state.get("revision_count", 0) + 1
+                _save_state(state)
+                return {
+                    "action": "criteria_not_met",
+                    "pr_number": pr_number,
+                    "missing_criteria": missing,
+                    "reason": f"PR missing {len(missing)} acceptance criteria",
+                }
+
+        # CI passed and criteria check passed — request LLM review
         _log(f"CI passed for PR #{pr_number}, moving to DEPLOYING")
         state["phase"] = "DEPLOYING"
         _save_state(state)
