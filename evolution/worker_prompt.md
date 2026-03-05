@@ -29,6 +29,32 @@ Use the virtualenv: `source polymarket-venv/bin/activate`
 - Include results in: `evolution/state/last_backtest.json`
 - The conductor will check for this file
 
+## Acceptance Criteria Verification (MANDATORY)
+
+Before declaring your work complete, you MUST verify acceptance criteria:
+
+1. **Re-read the issue** — look at every `- [ ]` checkbox item
+2. **Check each criterion** — is it actually satisfied by your changes?
+3. **If any criterion is NOT met** — keep working until it is
+4. **Include a verification block** in your final commit message
+
+Your final commit message MUST include a `Criteria Verification` section listing
+each acceptance criterion and how it was met:
+
+```
+fix #{number}: <short description>
+
+<explanation>
+
+Criteria Verification:
+- [x] <criterion 1> — <how it was met>
+- [x] <criterion 2> — <how it was met>
+- [x] <criterion 3> — <how it was met>
+```
+
+⚠️ The conductor will automatically reject PRs that don't include criteria
+verification. Do NOT skip this step.
+
 ## PR Description Template
 When your changes are ready, the conductor will open a PR. Make sure your commits clearly describe what changed and why.
 
@@ -40,6 +66,9 @@ fix #{number}: <short description>
 - What was the problem
 - What was changed
 - How it was tested
+
+Criteria Verification:
+- [x] <each acceptance criterion and how it was met>
 ```
 
 ## Testing
