@@ -141,3 +141,4 @@ The LLM review uses Claude via the Anthropic API. Add `ANTHROPIC_API_KEY` as a G
 ## Adding New Discovery Sources
 
 Edit `discover.py` and add a new `_check_*()` function. Call it in `discover_work()` in the appropriate priority position.
+# Pipeline test Thu Mar  5 13:56:05 UTC 2026
