@@ -21,9 +21,12 @@ Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 m
 | Script | Purpose |
 |--------|---------|
 | `scripts/redeem_auto.mjs` | Node.js auto-redemption via Builder Relayer (called by `bot/redeemer.py`) |
-| `scripts/gasless_redeem.py` | Standalone Python redemption script (manual use) |
-| `scripts/redeem_builder.mjs` | Original Node.js redemption script (manual use) |
-| `scripts/resolution_watcher.py` | Standalone resolution + unredeemed position scanner |
+| `scripts/anthropic_token.mjs` | OAuth token manager for Claude subscription (used by `bot/llm.py`) |
+| `scripts/pre-deploy.sh` | Pre-deploy smoke test runner |
+| `scripts/run_tests.sh` | Convenience test runner |
+
+> **Note:** All trading, scanning, resolution, and analysis logic lives in `bot/`.
+> The `scripts/` folder only contains runtime support scripts. See `scripts/README.md`.
 
 ## Key Rules
 1. **ALL trades** go through `execution.execute_buy()` / `execute_sell()` — never call `api.market_buy/sell` directly
