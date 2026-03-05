@@ -238,11 +238,46 @@ def _handle_reviewing(state: dict) -> dict:
 
     if ci_state == "success":
         # Check if strategy/performance issue needs backtest
-        # For now, auto-approve
+        issue_number = state.get("current_issue")
+        if issue_number:
+            try:
+                issue = github_client.get_issue(issue_number)
+                labels = [l["name"] if isinstance(l, dict) else l for l in issue.get("labels", [])]
+                if any(l in ("strategy", "performance") for l in labels):
+                    # Verify backtest results exist
+                    pr = github_client.get_pr(pr_number)
+                    pr_body = pr.get("body", "") or ""
+                    if "backtest" not in pr_body.lower():
+                        _log(f"Strategy PR #{pr_number} missing backtest results")
+                        try:
+                            github_client.post_comment(
+                                pr_number,
+                                "⚠️ This is a strategy/performance change but no backtest results "
+                                "found in the PR description. Please run `evolution/backtest.py` "
+                                "and include results before this can be merged.",
+                            )
+                        except Exception:
+                            pass
+                        state["phase"] = "REVISING"
+                        state["revision_count"] = state.get("revision_count", 0) + 1
+                        _save_state(state)
+                        return {"action": "needs_backtest", "pr_number": pr_number}
+            except Exception as e:
+                _log(f"Warning: couldn't check issue labels: {e}")
+
+        # CI passed and backtest check passed — request LLM review
+        # The LLM review is done by the conductor (which runs as a Claude subagent)
+        # It posts the review as a PR comment. The actual review happens in the
+        # cron job wrapper that calls conductor.py, since the conductor outputs
+        # the diff for review.
         _log(f"CI passed for PR #{pr_number}, moving to DEPLOYING")
         state["phase"] = "DEPLOYING"
         _save_state(state)
-        return {"action": "ci_passed", "pr_number": pr_number}
+        return {
+            "action": "ci_passed_needs_review",
+            "pr_number": pr_number,
+            "review_requested": True,
+        }
 
     if ci_state == "failure":
         revision_count = state.get("revision_count", 0) + 1
