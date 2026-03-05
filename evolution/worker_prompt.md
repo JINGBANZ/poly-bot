@@ -17,7 +17,7 @@ Issue: #{number} — {title}
 - The pre-commit hook runs pytest automatically — your commit will fail if tests don't pass
 - Commit messages must reference the issue: `fix #{number}: description`
 - Do NOT restart the bot (`polymarket-bot` service)
-- Do NOT modify `evolution/` files
+- You CAN modify `evolution/` files when the issue requires it
 - When done, your changes should be committed to the branch and pushed
 
 ## Working Directory
