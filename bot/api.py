@@ -7,11 +7,16 @@ from . import config
 # === POSITIONS (source of truth: data-api) ===
 
 def get_positions():
-    """Fetch all open positions from Polymarket data-api."""
+    """Fetch all open positions from Polymarket data-api.
+    
+    Uses sizeThreshold=0 to include dust positions from partial fills.
+    Without this, the data-api's default threshold hides small remainders,
+    making them invisible to monitoring, stop-loss, and redemption.
+    """
     try:
         r = requests.get(
             f"{config.DATA_API}/positions",
-            params={"user": config.WALLET},
+            params={"user": config.WALLET, "sizeThreshold": 0},
             timeout=15
         )
         r.raise_for_status()
