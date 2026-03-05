@@ -1,8 +1,8 @@
-name: PR Review — Tests
+name: PR Review — Tests + Claude
 
 on:
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, ready_for_review, reopened]
 
 jobs:
   test:
@@ -22,3 +22,51 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest bot/tests/ -q --tb=short
+
+  claude-review:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            You are reviewing a PR for a Polymarket trading bot that trades on prediction markets with real money.
+
+            IMPORTANT CONTEXT — Read CONTRIBUTING.md for the module map.
+
+            Review this PR with focus on:
+            1. **Bugs and logic errors** — especially in trading logic, order handling, balance calculations
+            2. **Regressions** — does this break existing functionality?
+            3. **Security** — API key exposure, unsafe operations, missing input validation
+            4. **Error handling** — are failures handled gracefully? Could exceptions crash the daemon?
+            5. **Strategy logic** — if this changes trading parameters, are the changes data-backed?
+            6. **Side effects** — could this change affect other modules unexpectedly?
+
+            CRITICAL RULES:
+            - All trades MUST go through execution.execute_buy()/execute_sell()
+            - Never call api.market_buy/sell directly
+            - Strategy/performance changes MUST include backtest results in PR description
+
+            If you find critical issues: clearly flag them with ⚠️ and explain why.
+            If the PR is clean: say so concisely.
+
+            Use `gh pr comment` for top-level feedback.
+            Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues.
+            Only post GitHub comments — don't submit review text as messages.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read"
