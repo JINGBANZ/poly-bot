@@ -31,7 +31,11 @@ backtest/
 # Block all top-level .py files (code belongs in bot/ or scripts/)
 /*.py
 state/
-scripts/
+scripts/node_modules/
+scripts/gasless_redeem.py
+scripts/redeem_builder.mjs
+scripts/redeem.mjs
+scripts/resolution_watcher.py
 
 # Evolution runtime state (track code, not state files)
 evolution/state/*.json
