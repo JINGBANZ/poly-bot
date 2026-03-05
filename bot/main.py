@@ -397,6 +397,18 @@ def run_cycle(dry_run=False) -> dict:
         except Exception:
             pass
 
+    # 2a. Auto-redemption check (every cycle)
+    try:
+        from .redeemer import check_and_redeem
+        redeemed = check_and_redeem(dry_run=dry_run)
+        if redeemed:
+            for r in redeemed:
+                if r.get("success"):
+                    log(f"  💰 Auto-redeemed: {r['title']} (${r['size']:.2f})")
+    except Exception as e:
+        if verbose:
+            log(f"  ⚠️ Redeemer: {e}")
+
     # 2b. Government feed monitoring (every cycle — feeds update infrequently)
     try:
         from .gov_monitor import check_gov_feeds, match_to_markets
