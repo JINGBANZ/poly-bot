@@ -4,53 +4,101 @@ The Evolution Loop is a fully automated system that discovers issues, implements
 
 ## Architecture Overview
 
+The conductor is a **pure dispatcher** — it only manages state transitions and tells the cron wrapper which subagent to spawn. It never does work itself.
+
 ```
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │  OpenClaw    │───▶│  Conductor   │───▶│   GitHub     │
-│  Cron (15m)  │    │  (state      │    │   API        │
-│              │    │   machine)   │    │              │
+│  Cron (15m)  │    │  (pure       │    │   API        │
+│              │    │  dispatcher) │    │              │
 └──────┬───────┘    └──────────────┘    └──────────────┘
-       │                                       │
-       ▼                                       ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   Worker     │    │   GitHub     │    │   Deploy     │
-│  Subagent    │───▶│   Actions    │───▶│  + Monitor   │
-│  (code fix)  │    │   (CI+LLM)  │    │  + Revert    │
-└──────────────┘    └──────────────┘    └──────────────┘
+       │                    │
+       ▼                    ▼
+┌──────────────────────────────────────────────────────┐
+│              Specialized Subagents                   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐            │
+│  │ WORKING  │ │REVIEWING │ │ REVISING │            │
+│  │(code fix)│ │(CI check)│ │(fix fail)│            │
+│  └──────────┘ └──────────┘ └──────────┘            │
+│  ┌───────────┐ ┌───────────┐                        │
+│  │MONITORING │ │DIAGNOSING │                        │
+│  │(health)   │ │(doctor)   │                        │
+│  └───────────┘ └───────────┘                        │
+│         │                                            │
+│         ▼ writes phase_result.json                   │
+└──────────────────────────────────────────────────────┘
 ```
 
 ## State Machine
 
-The conductor (`conductor.py`) manages a state machine with these phases:
+The conductor (`conductor.py`) manages a state machine. **Inline phases** (IDLE, DISCOVERING, DEPLOYING) run directly. **Subagent phases** (WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING) spawn a specialized subagent and check for results on subsequent ticks.
 
 ### States
 
-| State | Description | Transitions To |
-|-------|-------------|----------------|
-| **IDLE** | Ready for next cycle | → DISCOVERING |
-| **DISCOVERING** | Finding work: inbox → issues → performance → audit | → WORKING, IDLE |
-| **WORKING** | Worker subagent is implementing the fix | → REVIEWING |
-| **REVIEWING** | CI running on PR, checking results | → DEPLOYING, REVISING |
-| **REVISING** | CI failed, worker fixing; max 3 attempts | → REVIEWING, IDLE |
-| **DEPLOYING** | Merging PR, pulling code, restarting bot | → MONITORING |
-| **MONITORING** | 30 min health watch after deploy | → IDLE |
+| State | Subagent? | Description | Transitions To |
+|-------|-----------|-------------|----------------|
+| **IDLE** | No | Ready for next cycle | → DISCOVERING |
+| **DISCOVERING** | No | Finding work: inbox → issues → performance → audit | → WORKING, IDLE |
+| **WORKING** | Yes | Worker subagent implementing the fix | → REVIEWING, DIAGNOSING |
+| **REVIEWING** | Yes | CI monitor checking PR status + acceptance criteria | → DEPLOYING, REVISING, DIAGNOSING |
+| **REVISING** | Yes | Fix CI failures / review issues, push to branch | → REVIEWING, DIAGNOSING |
+| **DEPLOYING** | No | Merging PR, pulling code, restarting bot | → MONITORING |
+| **MONITORING** | Yes | 30 min health watch after deploy | → IDLE |
+| **DIAGNOSING** | Yes | Generic doctor — investigate ANY failure | → IDLE, any phase |
 
 ### State Transitions
 
 ```
 IDLE ──(ready)──▶ DISCOVERING
-DISCOVERING ──(issue found)──▶ WORKING
+DISCOVERING ──(issue found)──▶ WORKING [spawn subagent]
 DISCOVERING ──(no work)──▶ IDLE
-WORKING ──(commits pushed, PR opened)──▶ REVIEWING
-REVIEWING ──(CI passed)──▶ DEPLOYING
-REVIEWING ──(CI failed)──▶ REVISING
-REVISING ──(new commits)──▶ REVIEWING
-REVISING ──(max attempts)──▶ IDLE (label: needs-human)
-DEPLOYING ──(success)──▶ MONITORING
+WORKING ──(result: commits pushed)──▶ REVIEWING [open PR, spawn subagent]
+WORKING ──(result: error/timeout)──▶ DIAGNOSING [spawn subagent]
+REVIEWING ──(result: ci_passed)──▶ DEPLOYING
+REVIEWING ──(result: ci_failed)──▶ REVISING [spawn subagent]
+REVIEWING ──(timeout)──▶ DIAGNOSING [spawn subagent]
+REVISING ──(result: fixes_pushed)──▶ REVIEWING [spawn subagent]
+REVISING ──(result: cannot_fix)──▶ IDLE (label: needs-human)
+REVISING ──(timeout)──▶ DIAGNOSING [spawn subagent]
+DEPLOYING ──(success)──▶ MONITORING [spawn subagent]
 DEPLOYING ──(failure)──▶ IDLE
-MONITORING ──(healthy after 30m)──▶ IDLE (close issue)
-MONITORING ──(unhealthy)──▶ IDLE (auto-revert, label: regression)
+MONITORING ──(result: healthy)──▶ IDLE (close issue)
+MONITORING ──(result: unhealthy/reverted)──▶ IDLE (auto-revert, label: regression)
+MONITORING ──(timeout)──▶ DIAGNOSING [spawn subagent]
+DIAGNOSING ──(result: resolved)──▶ [recommended phase]
+DIAGNOSING ──(result: retry)──▶ IDLE (retry with context)
+DIAGNOSING ──(result: needs_human)──▶ IDLE (label: needs-human)
 ```
+
+### Subagent Communication Protocol
+
+Each subagent writes its result to `evolution/state/phase_result.json` when done:
+
+```json
+{
+  "phase": "REVIEWING",
+  "status": "ci_passed",
+  "details": { ... },
+  "errors": [],
+  "timestamp": "2025-01-01T00:00:00+00:00"
+}
+```
+
+Status values per phase:
+- **REVIEWING**: `ci_passed`, `ci_failed`, `error`
+- **REVISING**: `fixes_pushed`, `cannot_fix`, `error`
+- **MONITORING**: `healthy`, `unhealthy`, `reverted`
+- **DIAGNOSING**: `resolved`, `retry`, `needs_human`, `error`
+
+### Subagent Timeouts
+
+| Phase | Timeout | Rationale |
+|-------|---------|-----------|
+| WORKING | 25 min (1500s) | Implementation time |
+| REVIEWING | 30 min (1800s) | CI can be slow |
+| REVISING | 25 min (1500s) | Targeted fixes |
+| MONITORING | 35 min (2100s) | Full 30 min monitoring window |
+| DIAGNOSING | 10 min (600s) | Fast investigation |
 
 ## Discovery Priority
 
@@ -65,25 +113,38 @@ The discovery module checks for work in this order:
 - Max 5 open agent-created issues at any time (prevents runaway)
 - No cooldown needed — MONITORING phase (30 min) provides post-deploy safety buffer
 - Max 3 revision attempts per issue before flagging for human
+- Max 2 retries per issue after diagnosis timeout
 - Auto-revert if unhealthy within 30 min monitoring window
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `conductor.py` | State machine — the cron entry point |
+| `conductor.py` | Pure dispatcher state machine — the cron entry point |
 | `discover.py` | Issue discovery + performance analysis |
 | `deploy.py` | Merge, deploy, health check, auto-revert |
 | `github_client.py` | GitHub API wrapper (issues, PRs, CI, comments) |
 | `performance.py` | Trade log analysis, baseline comparison, regime detection |
 | `backtest.py` | Historical backtest framework for strategy changes |
-| `worker_prompt.md` | Template for worker subagent instructions |
+
+### Prompt Templates (`prompts/`)
+
+Each subagent phase has a specialized prompt template:
+
+| File | Phase | Job |
+|------|-------|-----|
+| `prompts/working.md` | WORKING | Implement fix for an issue |
+| `prompts/reviewing.md` | REVIEWING | Monitor CI, check acceptance criteria |
+| `prompts/revising.md` | REVISING | Fix CI failures, push corrections |
+| `prompts/monitoring.md` | MONITORING | 30 min health monitoring after deploy |
+| `prompts/diagnosing.md` | DIAGNOSING | Investigate any failure in any phase |
 
 ### State Files (`state/`)
 
 | File | Purpose |
 |------|---------|
-| `evolution_state.json` | Current phase, issue/PR numbers, timestamps |
+| `evolution_state.json` | Current phase, issue/PR numbers, timestamps, subagent tracking |
+| `phase_result.json` | Subagent result (written by subagent, read+deleted by conductor) |
 | `performance_baseline.json` | Baseline metrics for comparison |
 | `audit_rotation.json` | Which module was last audited |
 | `regime.json` | Current market regime classification |
@@ -107,13 +168,37 @@ Or just a plain text file with a description of what you want changed.
 
 The OpenClaw cron runs every 15 minutes:
 
-1. Calls `python -m evolution.conductor`
-2. Reads JSON output from stdout
-3. Based on `action` field:
-   - `spawn_worker`: Spawns a subagent with the worker prompt template
+1. Cron fires → spawns a cron subagent
+2. Cron subagent runs `python -m evolution.conductor`
+3. Conductor outputs JSON to stdout
+4. Based on `action` field:
+   - `spawn_subagent`: Cron subagent calls `sessions_spawn` with the `task` field, saves session key to state
    - `deployed` / `reverted` / `success` / `needs_human`: Sends Telegram notification
-   - `skip`: Does nothing
+   - `skip`: Does nothing (subagent still running, or no work)
    - `error`: Logs the error
+   - `ci_passed`: Intermediate status, next tick will handle DEPLOYING
+   - `retry`: Issue being retried with diagnosis context
+5. Next tick (15 min later): conductor checks if `phase_result.json` exists
+
+### Conductor Output Format
+
+```json
+{
+  "action": "spawn_subagent",
+  "phase": "REVIEWING",
+  "task": "<filled prompt template>",
+  "timeout_seconds": 1800,
+  "issue_number": 42,
+  "pr_number": 15,
+  "timestamp": "2025-01-01T00:00:00+00:00"
+}
+```
+
+The cron wrapper spawns the subagent and saves the session key back to `evolution_state.json`:
+```python
+state["subagent_session_key"] = session_key
+state["subagent_started_ts"] = time.time()
+```
 
 ## GitHub Actions
 
@@ -137,6 +222,7 @@ The LLM review uses Claude via the Anthropic API. Add `ANTHROPIC_API_KEY` as a G
 - **Force discovery**: Set phase to `"DISCOVERING"`
 - **Skip monitoring**: Set phase to `"IDLE"` (but be careful — no auto-revert)
 - **Flag for human**: Add `needs-human` label to any issue
+- **Clear stuck subagent**: Set `subagent_session_key` to `null` in state file
 
 ## Adding New Discovery Sources
 
