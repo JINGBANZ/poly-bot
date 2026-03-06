@@ -73,7 +73,11 @@ def _save_state(state: dict):
 
 
 def _parse_feed(url: str, timeout: int = 15) -> list:
-    """Parse an RSS/Atom feed. Uses feedparser if available, falls back to stdlib."""
+    """Parse an RSS/Atom feed. Uses feedparser if available, falls back to stdlib.
+
+    Returns list of entry dicts. Never raises — returns [] on any error.
+    """
+    # Try feedparser first (handles HTTP errors and malformed XML gracefully)
     try:
         import feedparser
         feed = feedparser.parse(url)
@@ -99,7 +103,12 @@ def _parse_feed(url: str, timeout: int = 15) -> list:
             })
         return entries
     except ImportError:
-        # Fallback: use urllib + xml.etree
+        pass  # Fall through to stdlib
+    except Exception:
+        return []
+
+    # Fallback: use urllib + xml.etree
+    try:
         import urllib.request
         import xml.etree.ElementTree as ET
         req = urllib.request.Request(url, headers={"User-Agent": "PolymarketBot/1.0"})
