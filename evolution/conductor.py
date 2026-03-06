@@ -29,7 +29,7 @@ STATE_DIR = REPO_ROOT / "evolution" / "state"
 STATE_FILE = STATE_DIR / "evolution_state.json"
 
 # Timing constants
-COOLDOWN_SECONDS = 3600        # 1 hour between deploys
+COOLDOWN_SECONDS = 600         # 10 min between deploys
 MONITOR_SECONDS = 1800         # 30 min monitoring window
 MAX_REVISIONS = 3              # Max revision attempts before giving up
 PHASE_TIMEOUT_SECONDS = 1800   # 30 min — fail fast on stuck phases
