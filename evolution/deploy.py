@@ -31,17 +31,37 @@ def merge_and_deploy(pr_number: int) -> dict:
     except RuntimeError as e:
         raise RuntimeError(f"Failed to merge PR #{pr_number}: {e}")
 
-    # 2. Git pull
+    # 2. Git fetch + reset to origin/main (avoids divergent branch issues)
     try:
-        result = subprocess.run(
-            ["git", "pull", "origin", "main"],
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", "main"],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
             timeout=60,
         )
-        if result.returncode != 0:
-            raise RuntimeError(f"git pull failed: {result.stderr}")
+        if fetch.returncode != 0:
+            raise RuntimeError(f"git fetch failed: {fetch.stderr}")
+
+        checkout = subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if checkout.returncode != 0:
+            raise RuntimeError(f"git checkout main failed: {checkout.stderr}")
+
+        reset = subprocess.run(
+            ["git", "reset", "--hard", "origin/main"],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if reset.returncode != 0:
+            raise RuntimeError(f"git reset failed: {reset.stderr}")
     except subprocess.TimeoutExpired:
         raise RuntimeError("git pull timed out")
 
