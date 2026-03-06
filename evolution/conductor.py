@@ -372,31 +372,58 @@ def _handle_reviewing(state: dict) -> dict:
         _save_state(state)
         return {"action": "error", "reason": "No PR number in REVIEWING state"}
 
-    # --- Timeout check ---
+    # Get CI status FIRST — we need it for both timeout diagnosis and normal flow
+    try:
+        status = github_client.get_pr_status(pr_number)
+    except RuntimeError as e:
+        _log(f"Failed to check PR status: {e}")
+        return {"action": "error", "reason": f"CI status check failed: {e}"}
+
+    ci_state = status.get("state", "unknown")
+    ci_errors = status.get("errors", [])
+
+    # Log any API errors — never swallow them
+    if ci_errors:
+        for err in ci_errors:
+            _log(f"CI status warning: {err}")
+
+    # --- Timeout check (with CI context for diagnosis) ---
     if _check_phase_timeout(state, PHASE_TIMEOUT_SECONDS):
         issue_number = state.get("issue_number")
         elapsed = int(_now() - state.get("phase_started_ts", 0))
         _log(f"REVIEWING phase timed out after {elapsed}s for PR #{pr_number}")
-        state["diagnosis"] = (
-            f"REVIEWING phase timed out after {elapsed}s. "
-            f"PR #{pr_number} CI never completed or review stalled."
-        )
+
+        # Build detailed diagnosis with actual CI errors
+        diag_parts = [f"REVIEWING phase timed out after {elapsed}s for PR #{pr_number}."]
+        diag_parts.append(f"CI state at timeout: {ci_state}")
+        diag_parts.append(f"Missing required checks: {status.get('missing_required', [])}")
+        if ci_errors:
+            diag_parts.append(f"API errors encountered: {'; '.join(ci_errors)}")
+        if status.get("checks"):
+            check_summary = [f"{c['name']}={c.get('conclusion', 'pending')}" for c in status["checks"]]
+            diag_parts.append(f"Checks found: {', '.join(check_summary)}")
+        else:
+            diag_parts.append("No checks found at all — likely a permissions or API issue")
+
+        state["diagnosis"] = " | ".join(diag_parts)
         _transition(state, "DIAGNOSING")
         return {
             "action": "timeout",
             "phase": "REVIEWING",
             "pr_number": pr_number,
             "issue_number": issue_number,
+            "ci_errors": ci_errors,
             "reason": f"REVIEWING timed out after {elapsed}s",
         }
 
-    try:
-        status = github_client.get_pr_status(pr_number)
-    except RuntimeError as e:
-        _log(f"Failed to check PR status: {e}")
-        return {"action": "skip", "reason": f"CI status check failed: {e}"}
-
-    ci_state = status.get("state", "unknown")
+    # Handle error state — all APIs failed
+    if ci_state == "error":
+        _log(f"CI status returned error for PR #{pr_number}: {ci_errors}")
+        return {
+            "action": "error",
+            "reason": f"Cannot determine CI status — API errors: {'; '.join(ci_errors)}",
+            "ci_errors": ci_errors,
+        }
     _log(f"PR #{pr_number} CI status: {ci_state}")
 
     if ci_state == "pending":
@@ -541,7 +568,11 @@ def _handle_revising(state: dict) -> dict:
 
 
 def _handle_diagnosing(state: dict) -> dict:
-    """DIAGNOSING: Investigate why a phase timed out, decide retry or give up."""
+    """DIAGNOSING: Actively investigate why a phase timed out, decide retry or give up.
+
+    This phase does REAL investigation — it doesn't just report the timeout message.
+    It reproduces the problem, checks APIs, and provides actionable diagnosis.
+    """
     issue_number = state.get("issue_number")
     branch = state.get("branch")
     pr_number = state.get("pr_number")
@@ -559,8 +590,10 @@ def _handle_diagnosing(state: dict) -> dict:
 
     _log(f"Diagnosing issue #{issue_number} (retry {retry_count}/{MAX_RETRIES_PER_ISSUE}): {diagnosis}")
 
-    # Gather evidence
-    evidence = [f"Diagnosis: {diagnosis}"]
+    # === ACTIVE INVESTIGATION ===
+    evidence = [f"Initial diagnosis: {diagnosis}"]
+
+    # 1. Check branch status
     if branch:
         branch_exists = github_client.branch_exists(branch)
         evidence.append(f"Branch '{branch}' exists on remote: {branch_exists}")
@@ -568,18 +601,70 @@ def _handle_diagnosing(state: dict) -> dict:
             try:
                 commits = github_client.get_branch_commits(branch, since_sha=None)
                 evidence.append(f"Commits on branch: {len(commits or [])}")
-            except Exception:
-                evidence.append("Could not fetch branch commits")
+                if commits:
+                    latest = commits[0]
+                    evidence.append(f"Latest commit: {latest['sha'][:8]} — {latest['commit']['message'][:80]}")
+            except Exception as e:
+                evidence.append(f"Could not fetch branch commits: {e}")
+
+    # 2. Actively check CI status (reproduce the problem)
     if pr_number:
         try:
             pr_status = github_client.get_pr_status(pr_number)
-            evidence.append(f"PR #{pr_number} CI state: {pr_status.get('state', 'unknown')}")
-        except Exception:
-            evidence.append(f"Could not fetch PR #{pr_number} status")
+            ci_state = pr_status.get("state", "unknown")
+            ci_errors = pr_status.get("errors", [])
+            ci_checks = pr_status.get("checks", [])
+            missing = pr_status.get("missing_required", [])
+
+            evidence.append(f"PR #{pr_number} CI state: {ci_state}")
+            evidence.append(f"Missing required checks: {missing}")
+
+            if ci_checks:
+                check_summary = [f"{c['name']}={c.get('conclusion', 'pending')}" for c in ci_checks]
+                evidence.append(f"Checks found: {', '.join(check_summary)}")
+            else:
+                evidence.append("NO checks found — this is the likely root cause")
+
+            if ci_errors:
+                evidence.append(f"API ERRORS (root cause): {'; '.join(ci_errors)}")
+
+            # 3. If CI actually passed, we can skip retry and go straight to deploying
+            if ci_state == "success":
+                evidence.append("CI actually PASSED — timeout was caused by API errors preventing status read")
+                _log(f"CI actually passed for PR #{pr_number} — moving to DEPLOYING")
+                _transition(state, "DEPLOYING")
+
+                try:
+                    github_client.post_comment(
+                        issue_number,
+                        f"🔍 **Diagnosis resolved** — CI was passing but status API was failing.\n\n"
+                        + "\n".join(f"- {e}" for e in evidence)
+                        + "\n\nProceeding to deploy.",
+                    )
+                except Exception:
+                    pass
+
+                return {
+                    "action": "diagnosis_resolved",
+                    "issue_number": issue_number,
+                    "pr_number": pr_number,
+                    "evidence": evidence,
+                    "reason": "CI passed — API error was masking success. Moving to DEPLOYING.",
+                }
+        except Exception as e:
+            evidence.append(f"Could not fetch PR #{pr_number} status during diagnosis: {e}")
+
+    # 3. Check PR state (is it still open?)
+    if pr_number:
+        try:
+            pr = github_client.get_pr(pr_number)
+            evidence.append(f"PR state: {pr.get('state')}, mergeable: {pr.get('mergeable')}")
+        except Exception as e:
+            evidence.append(f"Could not fetch PR details: {e}")
 
     evidence_text = "\n".join(f"- {e}" for e in evidence)
 
-    # Post diagnosis comment on the issue
+    # Post detailed diagnosis comment on the issue
     try:
         github_client.post_comment(
             issue_number,
