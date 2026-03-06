@@ -32,6 +32,10 @@ STATE_FILE = STATE_DIR / "evolution_state.json"
 COOLDOWN_SECONDS = 3600        # 1 hour between deploys
 MONITOR_SECONDS = 1800         # 30 min monitoring window
 MAX_REVISIONS = 3              # Max revision attempts before giving up
+PHASE_TIMEOUT_SECONDS = 1800   # 30 min — fail fast on stuck phases
+DIAG_TIMEOUT_SECONDS = 600     # 10 min — diagnosis shouldn't take long
+MAX_RETRIES_PER_ISSUE = 2      # Max times to retry an issue after timeout
+WORKER_PROMPT_FILE = REPO_ROOT / "evolution" / "worker_prompt.md"
 
 
 def _load_state() -> dict:
@@ -46,6 +50,9 @@ def _load_state() -> dict:
         "revision_count": 0,
         "last_commit_sha": None,
         "error": None,
+        "phase_started_ts": 0,
+        "retry_count": 0,
+        "diagnosis": None,
     }
     try:
         if STATE_FILE.exists():
@@ -80,6 +87,52 @@ def _now() -> float:
 def _output(result: dict):
     """Output JSON result to stdout for the cron wrapper."""
     print(json.dumps(result))
+
+
+# --- Phase transition & timeout helpers ---
+
+def _transition(state: dict, new_phase: str):
+    """Transition to a new phase, recording the timestamp."""
+    state["phase"] = new_phase
+    state["phase_started_ts"] = _now()
+    _save_state(state)
+    _log(f"Transitioned to {new_phase}")
+
+
+def _check_phase_timeout(state: dict, timeout_secs: int = PHASE_TIMEOUT_SECONDS) -> bool:
+    """Return True if the current phase has exceeded its timeout."""
+    started = state.get("phase_started_ts", 0)
+    if started == 0:
+        return False
+    elapsed = _now() - started
+    return elapsed > timeout_secs
+
+
+def build_worker_task(issue_number: int, issue_title: str, issue_body: str, branch: str, diagnosis: str | None = None) -> str:
+    """Build the worker subagent task string from the worker prompt template."""
+    try:
+        template = WORKER_PROMPT_FILE.read_text()
+    except FileNotFoundError:
+        template = (
+            "You are a worker improving the Polymarket trading bot.\n"
+            "Issue: #{number} — {title}\n\n{issue_body}\n\n"
+            "Work on branch `{branch}`. Commit and push when done."
+        )
+
+    task = template.replace("{number}", str(issue_number))
+    task = task.replace("{title}", issue_title)
+    task = task.replace("{issue_body}", issue_body)
+
+    if diagnosis:
+        task += (
+            f"\n\n## ⚠️ Previous Attempt Failed\n"
+            f"A previous worker timed out on this issue. Here's what was found:\n\n"
+            f"{diagnosis}\n\n"
+            f"Use this context to avoid repeating the same approach. "
+            f"Focus on the simplest possible fix."
+        )
+
+    return task
 
 
 # --- Acceptance criteria helpers ---
@@ -172,9 +225,8 @@ def _handle_idle(state: dict) -> dict:
         return {"action": "skip", "reason": f"Cooldown: {remaining}s remaining"}
 
     _log("Cooldown passed, transitioning to DISCOVERING")
-    state["phase"] = "DISCOVERING"
     state["error"] = None
-    _save_state(state)
+    _transition(state, "DISCOVERING")
     # Fall through to discovering
     return _handle_discovering(state)
 
@@ -204,22 +256,30 @@ def _handle_discovering(state: dict) -> dict:
         return {"action": "skip", "reason": "No issue number from discovery"}
 
     branch = f"improve/{issue_number}"
-    _log(f"Found work: issue #{issue_number} — {issue.get('title', 'untitled')}")
+    issue_title = issue.get("title", "")
+    issue_body_text = issue.get("body", "")
+    _log(f"Found work: issue #{issue_number} — {issue_title}")
 
-    state["phase"] = "WORKING"
     state["issue_number"] = issue_number
     state["branch"] = branch
     state["pr_number"] = None
     state["revision_count"] = 0
     state["last_commit_sha"] = None
-    _save_state(state)
+    _transition(state, "WORKING")
+
+    # Build the worker task with any diagnosis context from prior attempts
+    worker_task = build_worker_task(
+        issue_number, issue_title, issue_body_text, branch,
+        diagnosis=state.get("diagnosis"),
+    )
 
     return {
         "action": "spawn_worker",
         "issue_number": issue_number,
-        "issue_title": issue.get("title", ""),
-        "issue_body": issue.get("body", ""),
+        "issue_title": issue_title,
+        "issue_body": issue_body_text,
         "branch": branch,
+        "worker_task": worker_task,
         "reason": result.get("reason", ""),
     }
 
@@ -234,6 +294,23 @@ def _handle_working(state: dict) -> dict:
         state["phase"] = "IDLE"
         _save_state(state)
         return {"action": "error", "reason": "Invalid WORKING state"}
+
+    # --- Timeout check ---
+    if _check_phase_timeout(state, PHASE_TIMEOUT_SECONDS):
+        elapsed = int(_now() - state.get("phase_started_ts", 0))
+        _log(f"WORKING phase timed out after {elapsed}s for issue #{issue_number}")
+        branch_exists = github_client.branch_exists(branch)
+        state["diagnosis"] = (
+            f"WORKING phase timed out after {elapsed}s. "
+            f"Branch '{branch}' {'exists on remote (partial progress)' if branch_exists else 'was never pushed (worker likely died early)'}."
+        )
+        _transition(state, "DIAGNOSING")
+        return {
+            "action": "timeout",
+            "phase": "WORKING",
+            "issue_number": issue_number,
+            "reason": f"WORKING timed out after {elapsed}s",
+        }
 
     # Check if branch exists on remote
     if not github_client.branch_exists(branch):
@@ -268,8 +345,7 @@ def _handle_working(state: dict) -> dict:
         _log(f"Opened PR #{pr_number}")
 
         state["pr_number"] = pr_number
-        state["phase"] = "REVIEWING"
-        _save_state(state)
+        _transition(state, "REVIEWING")
 
         return {
             "action": "pr_opened",
@@ -287,8 +363,7 @@ def _handle_working(state: dict) -> dict:
                 if prs:
                     pr_number = prs[0]["number"]
                     state["pr_number"] = pr_number
-                    state["phase"] = "REVIEWING"
-                    _save_state(state)
+                    _transition(state, "REVIEWING")
                     return {"action": "pr_opened", "pr_number": pr_number, "issue_number": issue_number}
             except Exception:
                 pass
@@ -303,6 +378,24 @@ def _handle_reviewing(state: dict) -> dict:
         state["phase"] = "IDLE"
         _save_state(state)
         return {"action": "error", "reason": "No PR number in REVIEWING state"}
+
+    # --- Timeout check ---
+    if _check_phase_timeout(state, PHASE_TIMEOUT_SECONDS):
+        issue_number = state.get("issue_number")
+        elapsed = int(_now() - state.get("phase_started_ts", 0))
+        _log(f"REVIEWING phase timed out after {elapsed}s for PR #{pr_number}")
+        state["diagnosis"] = (
+            f"REVIEWING phase timed out after {elapsed}s. "
+            f"PR #{pr_number} CI never completed or review stalled."
+        )
+        _transition(state, "DIAGNOSING")
+        return {
+            "action": "timeout",
+            "phase": "REVIEWING",
+            "pr_number": pr_number,
+            "issue_number": issue_number,
+            "reason": f"REVIEWING timed out after {elapsed}s",
+        }
 
     try:
         status = github_client.get_pr_status(pr_number)
@@ -338,9 +431,8 @@ def _handle_reviewing(state: dict) -> dict:
                             )
                         except Exception:
                             pass
-                        state["phase"] = "REVISING"
                         state["revision_count"] = state.get("revision_count", 0) + 1
-                        _save_state(state)
+                        _transition(state, "REVISING")
                         return {"action": "needs_backtest", "pr_number": pr_number}
             except Exception as e:
                 _log(f"Warning: couldn't check issue labels: {e}")
@@ -364,9 +456,8 @@ def _handle_reviewing(state: dict) -> dict:
                 except Exception as e:
                     _log(f"Failed to post criteria comment: {e}")
 
-                state["phase"] = "REVISING"
                 state["revision_count"] = state.get("revision_count", 0) + 1
-                _save_state(state)
+                _transition(state, "REVISING")
                 return {
                     "action": "criteria_not_met",
                     "pr_number": pr_number,
@@ -376,8 +467,7 @@ def _handle_reviewing(state: dict) -> dict:
 
         # CI passed and criteria check passed — request LLM review
         _log(f"CI passed for PR #{pr_number}, moving to DEPLOYING")
-        state["phase"] = "DEPLOYING"
-        _save_state(state)
+        _transition(state, "DEPLOYING")
         return {
             "action": "ci_passed_needs_review",
             "pr_number": pr_number,
@@ -404,8 +494,7 @@ def _handle_reviewing(state: dict) -> dict:
         except Exception as e:
             _log(f"Failed to post comment: {e}")
 
-        state["phase"] = "REVISING"
-        _save_state(state)
+        _transition(state, "REVISING")
         return {
             "action": "ci_failed",
             "pr_number": pr_number,
@@ -423,23 +512,127 @@ def _handle_revising(state: dict) -> dict:
 
     branch = state.get("branch")
     last_sha = state.get("last_commit_sha")
+    issue_number = state.get("issue_number")
 
     if not branch:
         state["phase"] = "IDLE"
         _save_state(state)
         return {"action": "error", "reason": "No branch in REVISING state"}
 
+    # --- Timeout check ---
+    if _check_phase_timeout(state, PHASE_TIMEOUT_SECONDS):
+        elapsed = int(_now() - state.get("phase_started_ts", 0))
+        _log(f"REVISING phase timed out after {elapsed}s for issue #{issue_number}")
+        state["diagnosis"] = (
+            f"REVISING phase timed out after {elapsed}s. "
+            f"Worker never pushed revision commits for PR #{state.get('pr_number')}."
+        )
+        _transition(state, "DIAGNOSING")
+        return {
+            "action": "timeout",
+            "phase": "REVISING",
+            "issue_number": issue_number,
+            "reason": f"REVISING timed out after {elapsed}s",
+        }
+
     # Check for new commits
     commits = github_client.get_branch_commits(branch, since_sha=last_sha)
     if commits:
         state["last_commit_sha"] = commits[0]["sha"]
-        state["phase"] = "REVIEWING"
-        _save_state(state)
+        _transition(state, "REVIEWING")
         _log(f"New commits detected on {branch}, back to REVIEWING")
         return {"action": "new_commits", "reason": "Worker pushed fixes"}
 
     _log("No new commits yet, worker still revising")
     return {"action": "skip", "reason": "Worker still revising"}
+
+
+def _handle_diagnosing(state: dict) -> dict:
+    """DIAGNOSING: Investigate why a phase timed out, decide retry or give up."""
+    issue_number = state.get("issue_number")
+    branch = state.get("branch")
+    pr_number = state.get("pr_number")
+    diagnosis = state.get("diagnosis", "No diagnosis available")
+    retry_count = state.get("retry_count", 0)
+
+    # --- Timeout check on DIAGNOSING itself ---
+    if _check_phase_timeout(state, DIAG_TIMEOUT_SECONDS):
+        _log(f"DIAGNOSING itself timed out for issue #{issue_number}, forcing IDLE")
+        state["phase"] = "IDLE"
+        state["diagnosis"] = None
+        state["retry_count"] = 0
+        _save_state(state)
+        return {"action": "diag_timeout", "reason": "DIAGNOSING timed out, forced IDLE"}
+
+    _log(f"Diagnosing issue #{issue_number} (retry {retry_count}/{MAX_RETRIES_PER_ISSUE}): {diagnosis}")
+
+    # Gather evidence
+    evidence = [f"Diagnosis: {diagnosis}"]
+    if branch:
+        branch_exists = github_client.branch_exists(branch)
+        evidence.append(f"Branch '{branch}' exists on remote: {branch_exists}")
+        if branch_exists:
+            try:
+                commits = github_client.get_branch_commits(branch, since_sha=None)
+                evidence.append(f"Commits on branch: {len(commits or [])}")
+            except Exception:
+                evidence.append("Could not fetch branch commits")
+    if pr_number:
+        try:
+            pr_status = github_client.get_pr_status(pr_number)
+            evidence.append(f"PR #{pr_number} CI state: {pr_status.get('state', 'unknown')}")
+        except Exception:
+            evidence.append(f"Could not fetch PR #{pr_number} status")
+
+    evidence_text = "\n".join(f"- {e}" for e in evidence)
+
+    # Post diagnosis comment on the issue
+    try:
+        github_client.post_comment(
+            issue_number,
+            f"🔍 **Phase timeout diagnosis** (attempt {retry_count + 1}/{MAX_RETRIES_PER_ISSUE + 1})\n\n"
+            f"{evidence_text}\n\n"
+            f"{'Retrying with a fresh worker...' if retry_count < MAX_RETRIES_PER_ISSUE else 'Max retries reached, flagging for human review.'}",
+        )
+    except Exception as e:
+        _log(f"Failed to post diagnosis comment: {e}")
+
+    if retry_count < MAX_RETRIES_PER_ISSUE:
+        # Retry — clean up stale branch if needed, go back to DISCOVERING
+        state["retry_count"] = retry_count + 1
+        # Keep diagnosis so the next worker gets context
+        state["pr_number"] = None
+        state["branch"] = None
+        state["last_commit_sha"] = None
+        _transition(state, "IDLE")
+        _log(f"Retrying issue #{issue_number} (attempt {retry_count + 1})")
+        return {
+            "action": "retry",
+            "issue_number": issue_number,
+            "retry_count": retry_count + 1,
+            "diagnosis": diagnosis,
+            "reason": f"Retrying after timeout (attempt {retry_count + 1})",
+        }
+    else:
+        # Give up — label needs-human
+        _log(f"Max retries exceeded for issue #{issue_number}, flagging needs-human")
+        try:
+            github_client.add_label(issue_number, "needs-human")
+        except Exception:
+            pass
+
+        state["phase"] = "IDLE"
+        state["issue_number"] = None
+        state["pr_number"] = None
+        state["branch"] = None
+        state["retry_count"] = 0
+        state["diagnosis"] = None
+        _save_state(state)
+        return {
+            "action": "needs_human",
+            "issue_number": issue_number,
+            "reason": f"Max retries ({MAX_RETRIES_PER_ISSUE}) exceeded after timeouts",
+        }
 
 
 def _handle_max_revisions(state: dict) -> dict:
@@ -487,10 +680,9 @@ def _handle_deploying(state: dict) -> dict:
     try:
         result = merge_and_deploy(pr_number)
         deploy_ts = _now()
-        state["phase"] = "MONITORING"
         state["deploy_ts"] = deploy_ts
         state["last_deploy_ts"] = deploy_ts
-        _save_state(state)
+        _transition(state, "MONITORING")
 
         _log(f"Deployed PR #{pr_number} for issue #{issue_number}")
         return {
@@ -620,6 +812,7 @@ PHASE_HANDLERS = {
     "WORKING": _handle_working,
     "REVIEWING": _handle_reviewing,
     "REVISING": _handle_revising,
+    "DIAGNOSING": _handle_diagnosing,
     "DEPLOYING": _handle_deploying,
     "MONITORING": _handle_monitoring,
 }
