@@ -1,0 +1,7 @@
+# Dependencies needed for pytest CI runs
+# Keep minimal — only what bot modules need at import time
+py-clob-client
+requests
+feedparser
+ddgs
+pytest
