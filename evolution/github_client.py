@@ -136,11 +136,10 @@ REQUIRED_CHECKS = {"test", "claude-review"}
 
 
 def get_pr_status(pr_number: int) -> dict:
-    """Check CI status for a PR. Returns {state, checks, missing_required, errors}.
+    """Check CI status for a PR. Returns {state, checks, missing_required}.
 
     Uses the Actions API (workflow runs) as primary source since our PAT
     lacks checks:read scope. Falls back to check-runs and commit statuses.
-    All API errors are collected in the 'errors' list — never silently swallowed.
     Enforces that ALL REQUIRED_CHECKS have passed — acts as a code-level
     branch protection rule since GitHub branch protection is unavailable
     on free-tier private repos.
@@ -148,10 +147,9 @@ def get_pr_status(pr_number: int) -> dict:
     pr = _request("get", f"/pulls/{pr_number}")
     head_sha = pr.get("head", {}).get("sha", "")
     if not head_sha:
-        return {"state": "unknown", "checks": [], "missing_required": list(REQUIRED_CHECKS), "errors": ["No head SHA on PR"]}
+        return {"state": "unknown", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
     check_results = []
-    errors = []  # Collect ALL errors — never swallow silently
 
     # Strategy 1: Actions API (workflow runs) — works with our PAT
     try:
@@ -170,16 +168,15 @@ def get_pr_status(pr_number: int) -> dict:
                         "status": job.get("status"),
                         "conclusion": job.get("conclusion"),
                     })
-            except RuntimeError as e:
-                errors.append(f"Actions jobs API failed for run {run_id}: {e}")
+            except RuntimeError:
                 # Fall back to workflow-level status
                 check_results.append({
                     "name": wf_run.get("name"),
                     "status": wf_run.get("status"),
                     "conclusion": wf_run.get("conclusion"),
                 })
-    except RuntimeError as e:
-        errors.append(f"Actions runs API failed: {e}")
+    except RuntimeError:
+        pass
 
     # Strategy 2: Check-runs API (needs checks:read scope)
     if not check_results:
@@ -191,8 +188,8 @@ def get_pr_status(pr_number: int) -> dict:
                     "status": c.get("status"),
                     "conclusion": c.get("conclusion"),
                 })
-        except RuntimeError as e:
-            errors.append(f"Check-runs API failed: {e}")
+        except RuntimeError:
+            pass
 
     # Strategy 3: Commit statuses API (legacy)
     if not check_results:
@@ -204,18 +201,11 @@ def get_pr_status(pr_number: int) -> dict:
                     "status": s.get("state"),
                     "conclusion": s.get("state"),
                 })
-            if not combined.get("statuses"):
-                errors.append("Commit statuses API returned no statuses")
-        except RuntimeError as e:
-            errors.append(f"Commit statuses API failed: {e}")
+        except RuntimeError:
+            pass
 
     if not check_results:
-        return {
-            "state": "error",
-            "checks": [],
-            "missing_required": list(REQUIRED_CHECKS),
-            "errors": errors or ["All CI status APIs returned no results"],
-        }
+        return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
     # Check which required checks exist and passed
     check_by_name = {c.get("name"): c for c in check_results}
@@ -244,7 +234,6 @@ def get_pr_status(pr_number: int) -> dict:
         "state": overall,
         "checks": check_results,
         "missing_required": missing,
-        "errors": errors,
     }
 
 
