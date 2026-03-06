@@ -138,7 +138,8 @@ REQUIRED_CHECKS = {"test", "claude-review"}
 def get_pr_status(pr_number: int) -> dict:
     """Check CI status for a PR. Returns {state, checks, missing_required}.
 
-    Tries check-runs API first, falls back to commit statuses API.
+    Uses the Actions API (workflow runs) as primary source since our PAT
+    lacks checks:read scope. Falls back to check-runs and commit statuses.
     Enforces that ALL REQUIRED_CHECKS have passed — acts as a code-level
     branch protection rule since GitHub branch protection is unavailable
     on free-tier private repos.
@@ -148,41 +149,66 @@ def get_pr_status(pr_number: int) -> dict:
     if not head_sha:
         return {"state": "unknown", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
-    # Try check-runs API first (requires checks permission)
-    check_runs = []
+    check_results = []
+
+    # Strategy 1: Actions API (workflow runs) — works with our PAT
     try:
-        checks = _request("get", f"/commits/{head_sha}/check-runs")
-        check_runs = checks.get("check_runs", [])
+        runs = _request("get", "/actions/runs", params={
+            "head_sha": head_sha,
+            "per_page": 10,
+        })
+        workflow_runs = runs.get("workflow_runs", [])
+        for wf_run in workflow_runs:
+            run_id = wf_run.get("id")
+            try:
+                jobs_resp = _request("get", f"/actions/runs/{run_id}/jobs")
+                for job in jobs_resp.get("jobs", []):
+                    check_results.append({
+                        "name": job.get("name"),
+                        "status": job.get("status"),
+                        "conclusion": job.get("conclusion"),
+                    })
+            except RuntimeError:
+                # Fall back to workflow-level status
+                check_results.append({
+                    "name": wf_run.get("name"),
+                    "status": wf_run.get("status"),
+                    "conclusion": wf_run.get("conclusion"),
+                })
     except RuntimeError:
-        # Token may lack checks permission — fall back to statuses API
+        pass
+
+    # Strategy 2: Check-runs API (needs checks:read scope)
+    if not check_results:
+        try:
+            checks = _request("get", f"/commits/{head_sha}/check-runs")
+            for c in checks.get("check_runs", []):
+                check_results.append({
+                    "name": c.get("name"),
+                    "status": c.get("status"),
+                    "conclusion": c.get("conclusion"),
+                })
+        except RuntimeError:
+            pass
+
+    # Strategy 3: Commit statuses API (legacy)
+    if not check_results:
         try:
             combined = _request("get", f"/commits/{head_sha}/status")
-            api_state = combined.get("state", "pending")
-            statuses = combined.get("statuses", [])
-            if not statuses:
-                return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
-            return {
-                "state": api_state,
-                "checks": [
-                    {"name": s.get("context"), "status": s.get("state"), "conclusion": s.get("state")}
-                    for s in statuses
-                ],
-                "missing_required": list(REQUIRED_CHECKS),
-            }
+            for s in combined.get("statuses", []):
+                check_results.append({
+                    "name": s.get("context"),
+                    "status": s.get("state"),
+                    "conclusion": s.get("state"),
+                })
         except RuntimeError:
-            return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
+            pass
 
-    if not check_runs:
+    if not check_results:
         return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
-    # Build check results
-    check_results = [
-        {"name": c.get("name"), "status": c.get("status"), "conclusion": c.get("conclusion")}
-        for c in check_runs
-    ]
-
     # Check which required checks exist and passed
-    check_by_name = {c.get("name"): c for c in check_runs}
+    check_by_name = {c.get("name"): c for c in check_results}
     missing = []
     for req in REQUIRED_CHECKS:
         if req not in check_by_name:
@@ -192,17 +218,14 @@ def get_pr_status(pr_number: int) -> dict:
         elif check_by_name[req].get("conclusion") != "success":
             missing.append(req)  # Failed
 
-    states = [c.get("conclusion") for c in check_runs]
-
     if missing:
-        # If any required check is missing/pending/failed, not ready
-        if any(c.get("conclusion") == "failure" for c in check_runs):
+        if any(c.get("conclusion") == "failure" for c in check_results):
             overall = "failure"
         else:
             overall = "pending"
-    elif all(s == "success" for s in states):
+    elif all(c.get("conclusion") == "success" for c in check_results):
         overall = "success"
-    elif any(s == "failure" for s in states):
+    elif any(c.get("conclusion") == "failure" for c in check_results):
         overall = "failure"
     else:
         overall = "pending"
