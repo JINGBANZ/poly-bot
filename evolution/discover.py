@@ -113,6 +113,12 @@ def _check_open_issues() -> Optional[dict]:
     # Filter to issues only (not PRs)
     issues = [i for i in issues if "pull_request" not in i]
 
+    # Filter out issues labeled needs-human (these require manual intervention)
+    issues = [
+        i for i in issues
+        if "needs-human" not in [l["name"] for l in i.get("labels", [])]
+    ]
+
     if not issues:
         return None
 
