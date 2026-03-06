@@ -29,7 +29,6 @@ STATE_DIR = REPO_ROOT / "evolution" / "state"
 STATE_FILE = STATE_DIR / "evolution_state.json"
 
 # Timing constants
-COOLDOWN_SECONDS = 600         # 10 min between deploys
 MONITOR_SECONDS = 1800         # 30 min monitoring window
 MAX_REVISIONS = 3              # Max revision attempts before giving up
 PHASE_TIMEOUT_SECONDS = 1800   # 30 min — fail fast on stuck phases
@@ -45,7 +44,7 @@ def _load_state() -> dict:
         "issue_number": None,
         "pr_number": None,
         "branch": None,
-        "last_deploy_ts": 0,
+
         "deploy_ts": 0,
         "revision_count": 0,
         "last_commit_sha": None,
@@ -217,14 +216,8 @@ def check_criteria_in_pr(pr_number: int, issue_number: int) -> dict:
 # --- Phase handlers ---
 
 def _handle_idle(state: dict) -> dict:
-    """IDLE: Check cooldown, transition to DISCOVERING if ready."""
-    elapsed = _now() - state.get("last_deploy_ts", 0)
-    if elapsed < COOLDOWN_SECONDS:
-        remaining = int(COOLDOWN_SECONDS - elapsed)
-        _log(f"Cooldown active, {remaining}s remaining")
-        return {"action": "skip", "reason": f"Cooldown: {remaining}s remaining"}
-
-    _log("Cooldown passed, transitioning to DISCOVERING")
+    """IDLE: Transition to DISCOVERING immediately."""
+    _log("IDLE, transitioning to DISCOVERING")
     state["error"] = None
     _transition(state, "DISCOVERING")
     # Fall through to discovering
@@ -681,7 +674,7 @@ def _handle_deploying(state: dict) -> dict:
         result = merge_and_deploy(pr_number)
         deploy_ts = _now()
         state["deploy_ts"] = deploy_ts
-        state["last_deploy_ts"] = deploy_ts
+
         _transition(state, "MONITORING")
 
         _log(f"Deployed PR #{pr_number} for issue #{issue_number}")

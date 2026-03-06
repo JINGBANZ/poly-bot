@@ -27,7 +27,7 @@ The conductor (`conductor.py`) manages a state machine with these phases:
 
 | State | Description | Transitions To |
 |-------|-------------|----------------|
-| **IDLE** | Waiting for cooldown (1h since last deploy) | → DISCOVERING |
+| **IDLE** | Ready for next cycle | → DISCOVERING |
 | **DISCOVERING** | Finding work: inbox → issues → performance → audit | → WORKING, IDLE |
 | **WORKING** | Worker subagent is implementing the fix | → REVIEWING |
 | **REVIEWING** | CI running on PR, checking results | → DEPLOYING, REVISING |
@@ -38,7 +38,7 @@ The conductor (`conductor.py`) manages a state machine with these phases:
 ### State Transitions
 
 ```
-IDLE ──(cooldown passed)──▶ DISCOVERING
+IDLE ──(ready)──▶ DISCOVERING
 DISCOVERING ──(issue found)──▶ WORKING
 DISCOVERING ──(no work)──▶ IDLE
 WORKING ──(commits pushed, PR opened)──▶ REVIEWING
@@ -63,7 +63,7 @@ The discovery module checks for work in this order:
 
 ### Guardrails
 - Max 5 open agent-created issues at any time (prevents runaway)
-- 1 hour cooldown between deploys
+- No cooldown needed — MONITORING phase (30 min) provides post-deploy safety buffer
 - Max 3 revision attempts per issue before flagging for human
 - Auto-revert if unhealthy within 30 min monitoring window
 
@@ -133,7 +133,7 @@ The LLM review uses Claude via the Anthropic API. Add `ANTHROPIC_API_KEY` as a G
 
 ## Manual Intervention
 
-- **Stop the loop**: Set `evolution/state/evolution_state.json` phase to `"IDLE"` and `last_deploy_ts` to a future timestamp
+- **Stop the loop**: Set `evolution/state/evolution_state.json` phase to `"IDLE"` and disable the cron job
 - **Force discovery**: Set phase to `"DISCOVERING"`
 - **Skip monitoring**: Set phase to `"IDLE"` (but be careful — no auto-revert)
 - **Flag for human**: Add `needs-human` label to any issue
