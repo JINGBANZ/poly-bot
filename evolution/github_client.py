@@ -129,17 +129,24 @@ def merge_pr(pr_number: int) -> dict:
     return _request("put", f"/pulls/{pr_number}/merge", json={"merge_method": "squash"})
 
 
+# Required CI checks — both must pass before deploy is allowed.
+# Acts as a code-level branch protection rule (GitHub branch protection
+# requires a paid Team plan for private repos).
+REQUIRED_CHECKS = {"test", "claude-review"}
+
+
 def get_pr_status(pr_number: int) -> dict:
-    """Check CI status for a PR. Returns {state, checks}.
+    """Check CI status for a PR. Returns {state, checks, missing_required}.
 
     Tries check-runs API first, falls back to commit statuses API.
-    If neither API is accessible or no CI is configured, returns 'success'
-    (no CI required means nothing to block on).
+    Enforces that ALL REQUIRED_CHECKS have passed — acts as a code-level
+    branch protection rule since GitHub branch protection is unavailable
+    on free-tier private repos.
     """
     pr = _request("get", f"/pulls/{pr_number}")
     head_sha = pr.get("head", {}).get("sha", "")
     if not head_sha:
-        return {"state": "unknown", "checks": []}
+        return {"state": "unknown", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
     # Try check-runs API first (requires checks permission)
     check_runs = []
@@ -153,29 +160,46 @@ def get_pr_status(pr_number: int) -> dict:
             api_state = combined.get("state", "pending")
             statuses = combined.get("statuses", [])
             if not statuses:
-                # No statuses and no check runs — no CI configured, treat as success
-                return {"state": "success", "checks": []}
+                return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
             return {
                 "state": api_state,
                 "checks": [
                     {"name": s.get("context"), "status": s.get("state"), "conclusion": s.get("state")}
                     for s in statuses
                 ],
+                "missing_required": list(REQUIRED_CHECKS),
             }
         except RuntimeError:
-            # Both check-runs and statuses APIs inaccessible (likely token permissions).
-            # Treat as success — we can't enforce CI if we can't read it.
-            return {"state": "success", "checks": []}
+            return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
 
     if not check_runs:
-        # No check runs exist — CI was not triggered (e.g. path filter excluded),
-        # treat as success so we don't block forever
-        return {"state": "success", "checks": []}
+        return {"state": "pending", "checks": [], "missing_required": list(REQUIRED_CHECKS)}
+
+    # Build check results
+    check_results = [
+        {"name": c.get("name"), "status": c.get("status"), "conclusion": c.get("conclusion")}
+        for c in check_runs
+    ]
+
+    # Check which required checks exist and passed
+    check_by_name = {c.get("name"): c for c in check_runs}
+    missing = []
+    for req in REQUIRED_CHECKS:
+        if req not in check_by_name:
+            missing.append(req)
+        elif check_by_name[req].get("conclusion") is None:
+            missing.append(req)  # Still running
+        elif check_by_name[req].get("conclusion") != "success":
+            missing.append(req)  # Failed
 
     states = [c.get("conclusion") for c in check_runs]
 
-    if None in states:
-        overall = "pending"
+    if missing:
+        # If any required check is missing/pending/failed, not ready
+        if any(c.get("conclusion") == "failure" for c in check_runs):
+            overall = "failure"
+        else:
+            overall = "pending"
     elif all(s == "success" for s in states):
         overall = "success"
     elif any(s == "failure" for s in states):
@@ -185,10 +209,8 @@ def get_pr_status(pr_number: int) -> dict:
 
     return {
         "state": overall,
-        "checks": [
-            {"name": c.get("name"), "status": c.get("status"), "conclusion": c.get("conclusion")}
-            for c in check_runs
-        ],
+        "checks": check_results,
+        "missing_required": missing,
     }
 
 
