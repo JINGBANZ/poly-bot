@@ -72,11 +72,16 @@ def merge_and_deploy(pr_number: int) -> dict:
 def check_health() -> dict:
     """Check bot health after deployment.
 
-    Returns: {"healthy": bool, "reason": str, "details": dict}
+    Returns: {"severity": str, "reason": str, "details": dict}
+
+    Severity levels:
+    - "critical": Service is down or crash-looping. Blocks further deploys.
+    - "degraded": Service running but logging errors. Creates issue for evolution loop to fix.
+    - "healthy": No issues detected.
     """
     details = {}
 
-    # 1. Check systemd service status
+    # 1. Check systemd service status — if down, that's CRITICAL
     try:
         result = subprocess.run(
             ["systemctl", "is-active", SERVICE_NAME],
@@ -88,14 +93,15 @@ def check_health() -> dict:
         details["service_active"] = service_active
         if not service_active:
             return {
-                "healthy": False,
+                "severity": "critical",
                 "reason": f"Service not active: {result.stdout.strip()}",
                 "details": details,
             }
     except Exception as e:
-        return {"healthy": False, "reason": f"Service check failed: {e}", "details": details}
+        return {"severity": "critical", "reason": f"Service check failed: {e}", "details": details}
 
-    # 2. Check recent logs for errors
+    # 2. Check recent logs for errors — if errors exist, that's DEGRADED
+    error_lines = []
     try:
         result = subprocess.run(
             ["journalctl", "-u", SERVICE_NAME, "--since", "5 minutes ago", "--no-pager", "-q"],
@@ -106,15 +112,8 @@ def check_health() -> dict:
         log_lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
         error_lines = [l for l in log_lines if "ERROR" in l.upper() or "EXCEPTION" in l.upper() or "Traceback" in l]
         details["recent_errors"] = len(error_lines)
+        details["error_lines"] = error_lines[:20]  # Cap at 20 for issue body
         details["total_log_lines"] = len(log_lines)
-
-        # More than 3 errors in 5 minutes is concerning
-        if len(error_lines) > 3:
-            return {
-                "healthy": False,
-                "reason": f"Too many errors: {len(error_lines)} in last 5 minutes",
-                "details": details,
-            }
     except Exception as e:
         details["log_check_error"] = str(e)
 
@@ -124,7 +123,6 @@ def check_health() -> dict:
         if state_file.exists():
             age = time.time() - state_file.stat().st_mtime
             details["positions_age_seconds"] = int(age)
-            # If positions file hasn't been updated in 15 minutes, bot might be stuck
             if age > 900:
                 details["positions_stale"] = True
         else:
@@ -132,81 +130,16 @@ def check_health() -> dict:
     except Exception as e:
         details["state_check_error"] = str(e)
 
-    return {"healthy": True, "reason": "All checks passed", "details": details}
+    # Determine severity
+    if error_lines:
+        return {
+            "severity": "degraded",
+            "reason": f"{len(error_lines)} errors in last 5 minutes",
+            "details": details,
+        }
+
+    return {"severity": "healthy", "reason": "All checks passed", "details": details}
 
 
-def auto_revert(reason: str) -> dict:
-    """Auto-revert the last commit on main, push, and restart.
-
-    Used when monitoring detects issues after deployment.
-    Returns dict with revert details.
-    """
-    results = {"reason": reason}
-
-    # 1. Git revert HEAD
-    try:
-        result = subprocess.run(
-            ["git", "revert", "HEAD", "--no-edit"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            # If revert fails (e.g., merge conflicts), try reset
-            subprocess.run(
-                ["git", "revert", "--abort"],
-                cwd=str(REPO_ROOT),
-                capture_output=True,
-                timeout=10,
-            )
-            subprocess.run(
-                ["git", "reset", "--hard", "HEAD~1"],
-                cwd=str(REPO_ROOT),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            results["revert_method"] = "hard_reset"
-        else:
-            results["revert_method"] = "git_revert"
-    except Exception as e:
-        results["revert_error"] = str(e)
-        return results
-
-    # 2. Push
-    try:
-        result = subprocess.run(
-            ["git", "push", "origin", "main"],
-            cwd=str(REPO_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        results["pushed"] = result.returncode == 0
-        if result.returncode != 0:
-            # Force push if needed after hard reset
-            result = subprocess.run(
-                ["git", "push", "origin", "main", "--force"],
-                cwd=str(REPO_ROOT),
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            results["force_pushed"] = result.returncode == 0
-    except Exception as e:
-        results["push_error"] = str(e)
-
-    # 3. Restart service
-    try:
-        result = subprocess.run(
-            ["sudo", "systemctl", "restart", SERVICE_NAME],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        results["restarted"] = result.returncode == 0
-    except Exception as e:
-        results["restart_error"] = str(e)
-
-    return results
+    # auto_revert() removed — we fix forward, never revert.
+    # If health check finds errors, the evolution loop creates issues to fix them.

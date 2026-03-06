@@ -29,7 +29,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from evolution import github_client
 from evolution.discover import discover_work
-from evolution.deploy import merge_and_deploy, check_health, auto_revert
+from evolution.deploy import merge_and_deploy, check_health
 from evolution.performance import update_baseline
 
 STATE_DIR = REPO_ROOT / "evolution" / "state"
@@ -751,22 +751,57 @@ def _handle_revising_result(state: dict, result: dict) -> dict:
 
 
 def _handle_monitoring_result(state: dict, result: dict) -> dict:
-    """Handle result from MONITORING subagent."""
+    """Handle result from MONITORING subagent.
+
+    Severity-based response:
+    - healthy: close issue, success
+    - degraded: deploy is fine (service running), create issue for the errors, success
+    - critical: service down, alert and block further deploys
+    """
     status = result.get("status", "unknown")
     issue_number = state.get("issue_number")
     pr_number = state.get("pr_number")
 
-    if status == "healthy":
-        _log(f"Deploy healthy after monitoring for issue #{issue_number}")
-        # Close issue
+    if status in ("healthy", "degraded"):
+        _log(f"Deploy {'healthy' if status == 'healthy' else 'degraded (errors found)'} for issue #{issue_number}")
+
+        # Close the current issue — deploy succeeded
         if issue_number:
             try:
                 github_client.close_issue(
                     issue_number,
-                    f"✅ Successfully deployed and verified. PR #{pr_number} merged.",
+                    f"✅ Successfully deployed and verified. PR #{pr_number} merged."
+                    + (f"\n\n⚠️ Note: degraded health detected — see new issue for error details."
+                       if status == "degraded" else ""),
                 )
             except Exception as e:
                 _log(f"Failed to close issue: {e}")
+
+        # If degraded, create a new issue for the errors
+        if status == "degraded":
+            details = result.get("details", {})
+            error_lines = details.get("error_lines", [])
+            error_count = details.get("recent_errors", len(error_lines))
+            try:
+                error_sample = "\n".join(f"  {l}" for l in error_lines[:10])
+                github_client.create_issue(
+                    title=f"Bot logging {error_count} errors — investigate and fix",
+                    body=(
+                        f"## Problem\n"
+                        f"Health check after deploying PR #{pr_number} (issue #{issue_number}) "
+                        f"found {error_count} errors in the last 5 minutes.\n\n"
+                        f"The service IS running (not critical), but these errors need fixing.\n\n"
+                        f"## Error Sample\n```\n{error_sample}\n```\n\n"
+                        f"## Acceptance Criteria\n"
+                        f"- [ ] Identify root cause of each error type\n"
+                        f"- [ ] Fix or handle the errors properly\n"
+                        f"- [ ] No recurring errors in bot logs after fix\n"
+                    ),
+                    labels=["bug", "agent-created"],
+                )
+                _log(f"Created issue for {error_count} degraded errors")
+            except Exception as e:
+                _log(f"Failed to create degraded-health issue: {e}")
 
         try:
             update_baseline()
@@ -786,11 +821,11 @@ def _handle_monitoring_result(state: dict, result: dict) -> dict:
             "action": "success",
             "issue_number": issue_number,
             "pr_number": pr_number,
-            "reason": "Deploy verified healthy",
+            "reason": f"Deploy verified {'healthy' if status == 'healthy' else 'degraded — error issue created'}",
         }
 
-    if status in ("unhealthy", "reverted"):
-        _log(f"Deploy {status} for issue #{issue_number}")
+    if status == "critical":
+        _log(f"CRITICAL: Service down after deploying issue #{issue_number}")
         details = result.get("details", {})
 
         if issue_number:
@@ -798,18 +833,11 @@ def _handle_monitoring_result(state: dict, result: dict) -> dict:
                 github_client.add_label(issue_number, "regression")
                 github_client.post_comment(
                     issue_number,
-                    f"🚨 {'Auto-reverted' if status == 'reverted' else 'Unhealthy'} "
-                    f"after monitoring: {details.get('reason', 'unknown')}",
+                    f"🚨 **CRITICAL** — Service down after deploy: {details.get('reason', 'unknown')}\n\n"
+                    f"Deploy did NOT revert (fix-forward policy). Needs immediate attention.",
                 )
             except Exception:
                 pass
-
-        # If unhealthy but not yet reverted, do the revert
-        if status == "unhealthy":
-            try:
-                auto_revert(f"Monitoring subagent reported unhealthy: {details.get('reason', 'unknown')}")
-            except Exception as e:
-                _log(f"Auto-revert failed: {e}")
 
         state["phase"] = "IDLE"
         state["pr_number"] = None
@@ -818,9 +846,9 @@ def _handle_monitoring_result(state: dict, result: dict) -> dict:
         _save_state(state)
 
         return {
-            "action": "reverted",
+            "action": "critical",
             "issue_number": issue_number,
-            "reason": f"{'Reverted' if status == 'reverted' else 'Unhealthy'} during monitoring",
+            "reason": f"Service down after deploy: {details.get('reason', 'unknown')}",
         }
 
     _log(f"MONITORING subagent returned unexpected status: {status}")

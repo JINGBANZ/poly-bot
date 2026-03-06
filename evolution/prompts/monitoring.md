@@ -26,24 +26,21 @@ Check health every 5 minutes for 30 minutes (6 checks total).
 ```python
 import sys, time, json
 sys.path.insert(0, "/home/ubuntu/.openclaw/workspace/polymarket-bot")
-from evolution.deploy import check_health, auto_revert
+from evolution.deploy import check_health
 
 health = check_health()
-print(f"Healthy: {{health['healthy']}}")
+print(f"Severity: {{health['severity']}}")
 print(f"Reason: {{health['reason']}}")
 print(f"Details: {{json.dumps(health['details'], indent=2)}}")
 ```
 
-### 2. If Unhealthy — Revert Immediately
-If any health check returns `healthy: false`, revert immediately:
+### 2. Severity Levels
 
-```python
-from evolution.deploy import auto_revert
-result = auto_revert("Unhealthy during monitoring: <reason>")
-print(f"Revert result: {{json.dumps(result, indent=2)}}")
-```
+- **healthy**: All good. Continue monitoring.
+- **degraded**: Service is running but logging errors. Record the errors. Continue monitoring — this is NOT a deploy failure.
+- **critical**: Service is DOWN. Stop monitoring immediately. Report critical.
 
-Then write the result and stop monitoring.
+**We NEVER revert.** Fix-forward policy. If something is broken, the evolution loop creates an issue and fixes it in a future cycle.
 
 ### 3. Additional Checks
 Beyond the basic health check, also verify:
@@ -52,7 +49,7 @@ Beyond the basic health check, also verify:
 - No crash loops: `systemctl show polymarket-bot --property=NRestarts`
 
 ### 4. After 30 Minutes
-If all checks passed for the full monitoring window, report healthy.
+Report the worst severity seen across all checks.
 
 ## Writing Your Result
 
@@ -65,15 +62,17 @@ from datetime import datetime, timezone
 
 result = {
     "phase": "MONITORING",
-    "status": "healthy",  # or "unhealthy" or "reverted"
+    "status": "healthy",  # or "degraded" or "critical"
     "details": {
         "checks_performed": 6,
         "duration_seconds": 1800,
+        "reason": "All checks passed",  # or describe what was found
+        "recent_errors": 0,
+        "error_lines": [],  # actual error lines if degraded
         "health_history": [
-            {"timestamp": "...", "healthy": True, "details": {}},
+            {"timestamp": "...", "severity": "healthy", "details": {}},
             # ... one entry per check
         ],
-        "revert_result": None,  # or revert details if reverted
     },
     "errors": [],
     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -86,13 +85,12 @@ state_dir.mkdir(parents=True, exist_ok=True)
 
 ### Status Values
 - `healthy` — All checks passed for 30 minutes
-- `unhealthy` — Health check failed (did NOT auto-revert yet)
-- `reverted` — Health check failed AND auto-reverted
+- `degraded` — Service running but logging errors. Deploy succeeded. Conductor will create an issue for the errors.
+- `critical` — Service is down or crash-looping. Deploy may have broken something.
 
 ## Important
 - Do NOT merge or close any PRs
 - Do NOT modify any code
-- ONLY revert if health checks fail — use `auto_revert()` from deploy module
-- Run the full 30 minute monitoring window unless unhealthy
+- **NEVER revert** — we fix forward, not backward
+- Run the full 30 minute monitoring window unless critical
 - ALWAYS write phase_result.json before finishing
-- If you reverted, also post a comment on issue #{issue_number} via github_client
