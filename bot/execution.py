@@ -3,7 +3,6 @@
 import json
 import os
 from datetime import datetime, timezone, timedelta
-import requests
 from . import config
 from .logger import log
 
@@ -27,9 +26,12 @@ def log_trade(action: str, name: str, price: float, shares: float,
         "reason": reason,
         "thesis": thesis,
     }
-    os.makedirs(config.STATE_DIR, exist_ok=True)
-    with open(TRADE_LOG, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        os.makedirs(config.STATE_DIR, exist_ok=True)
+        with open(TRADE_LOG, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        log(f"⚠️ Failed to write trade log: {e} — trade: {action} {name}")
 
 
 def get_usdc_balance() -> float:
@@ -94,7 +96,7 @@ def _get_usdc_balance_legacy() -> float:
                 with open(REDEMPTIONS_FILE) as f:
                     data = json.load(f)
                 redemptions = float(data.get("total", 0))
-            except:
+            except Exception:
                 pass
         
         balance = DEPOSIT - total_buys + total_sells + redemptions
@@ -121,11 +123,14 @@ def get_today_trades() -> list:
                 line = line.strip()
                 if not line:
                     continue
-                t = json.loads(line)
+                try:
+                    t = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
                 if t.get("timestamp", "").startswith(today):
                     trades.append(t)
-    except:
-        pass
+    except Exception as e:
+        log(f"⚠️ Error reading trade log: {e}")
     return trades
 
 
@@ -136,7 +141,8 @@ def load_open_orders() -> list:
     try:
         with open(OPEN_ORDERS_FILE) as f:
             return json.load(f)
-    except:
+    except Exception as e:
+        log(f"⚠️ Error loading open orders: {e}")
         return []
 
 
@@ -182,7 +188,7 @@ def get_stale_orders(max_age_hours: float = 24.0) -> list:
             age = (now - placed).total_seconds() / 3600
             if age > max_age_hours:
                 stale.append(o)
-        except:
+        except (KeyError, ValueError, TypeError):
             stale.append(o)  # Can't parse date = treat as stale
     return stale
 
@@ -218,9 +224,13 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: entry_price {entry_price:.2f} > 85¢ ceiling. Refusing buy.")
         return {"success": False, "error": f"Price {entry_price:.2f} exceeds 85¢ safety ceiling"}
 
+    if amount_usd <= 0:
+        log(f"  🛑 EXECUTION GUARD: amount_usd={amount_usd} is non-positive. Refusing buy.")
+        return {"success": False, "error": "Non-positive buy amount"}
+
     result = market_buy(token_id, amount_usd)
     if order_succeeded(result):
-        shares = amount_usd / entry_price if entry_price > 0 else 0
+        shares = round(amount_usd / entry_price, 4) if entry_price > 0 else 0
         log(f"  ✅ Bought: {market_name[:50]} — ${amount_usd:.2f}")
         write_alert(f"🚀 BOUGHT: {market_name}\nAmt: ${amount_usd:.2f}\nReason: {reason}")
         log_trade("BUY", market_name, entry_price, shares,
@@ -245,6 +255,10 @@ def execute_sell(token_id: str, size: float, market_name: str,
     """
     from .api import market_sell
     from .alerts import write_alert
+
+    if size <= 0:
+        log(f"  🛑 EXECUTION GUARD: size={size} is non-positive. Refusing sell.")
+        return {"success": False, "error": "Non-positive sell size"}
 
     sell_amount = size * price if price > 0 else size
     result = market_sell(token_id, sell_amount)
