@@ -202,7 +202,7 @@ def order_succeeded(result) -> bool:
     """
     if not result or not isinstance(result, dict):
         return False
-    if "error" in result or "errorMsg" in result:
+    if result.get("error") or result.get("errorMsg"):
         return False
     return bool(result.get("success") or result.get("orderID"))
 
