@@ -364,18 +364,66 @@ def run_cycle(dry_run=False) -> dict:
         if gr.action.startswith("SELL"):
             # Check liquidity
             from .api import get_book, best_bid
+            from .illiquid_tracker import (
+                record_failed_sl, should_escalate, mark_escalated,
+                is_escalated, clear_position as clear_illiquid,
+            )
             book = get_book(pos.token_id)
             bid_price, bid_depth = best_bid(book)
 
             if bid_price < config.MIN_SELL_PRICE or bid_depth < config.MIN_BID_DEPTH_USD:
-                # No market liquidity — try placing a limit sell instead
+                # No market liquidity — track the failure and check escalation
                 if not dry_run:
-                    _try_limit_sell(pos, book, reason=gr.action)
+                    entry = record_failed_sl(
+                        pos.token_id, pos.title, pos.pnl_pct,
+                        bid_price, bid_depth,
+                    )
+                    attempts = entry["failed_attempts"]
+
+                    # Check if we should escalate
+                    escalate, esc_reason = should_escalate(pos.token_id, pos.pnl_pct)
+
+                    if escalate and not is_escalated(pos.token_id):
+                        # ESCALATION: force-sell at whatever price or alert
+                        if bid_price > 0 and bid_depth > 0:
+                            # There IS a bid, just below our thresholds — force sell
+                            log(f"  🚨 ESCALATION: force-selling {pos.title[:40]} — {esc_reason}")
+                            write_alert(
+                                f"🚨 ILLIQUID ESCALATION: {pos.title}\n"
+                                f"Reason: {esc_reason}\n"
+                                f"PnL: {pos.pnl_pct:.0%} | Bid: ${bid_price:.4f} | Depth: ${bid_depth:.2f}\n"
+                                f"Forcing sell at available price",
+                                severity="CRITICAL",
+                            )
+                            result = execute_sell(
+                                pos.token_id, pos.size, pos.title,
+                                reason=f"{gr.action}_FORCED",
+                                price=bid_price, pnl=pos.pnl,
+                            )
+                            mark_escalated(pos.token_id, "force_sell")
+                        else:
+                            # Truly zero liquidity — alert human
+                            log(f"  🚨 ESCALATION: alerting human for {pos.title[:40]} — {esc_reason}")
+                            write_alert(
+                                f"🚨 ILLIQUID ESCALATION — NEEDS HUMAN:\n"
+                                f"{pos.title}\n"
+                                f"Reason: {esc_reason}\n"
+                                f"PnL: {pos.pnl_pct:.0%} | {attempts} failed sell attempts\n"
+                                f"No bids available — manual intervention required",
+                                severity="CRITICAL",
+                            )
+                            mark_escalated(pos.token_id, "alert_human")
+                    else:
+                        # Not yet escalated — try limit sell + log
+                        _try_limit_sell(pos, book, reason=gr.action)
+                        if _state_changed(pos.token_id, gr.action, "no_liquidity"):
+                            log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity ({attempts} attempts)")
                 elif _state_changed(pos.token_id, gr.action, "no_liquidity"):
                     log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity, holding")
                 continue
 
-            # Has liquidity — alert and execute
+            # Has liquidity — alert and execute (clear any illiquid tracking)
+            clear_illiquid(pos.token_id)
             emoji = "🔴" if "SL" in gr.action else ("🟢" if "TP" in gr.action else "🟡")
             write_alert(f"{emoji} {gr.detail}")
             log(f"  {emoji} {gr.detail}")
