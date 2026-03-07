@@ -93,11 +93,13 @@ class TestTransition:
 class TestSubagentPhaseHandler:
     """Test the generic _handle_subagent_phase dispatcher."""
 
+    @patch("evolution.conductor._read_phase_result")
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_no_subagent_spawns_one(self, mock_save, mock_gh):
-        """When no subagent is running, should return spawn instruction."""
+    def test_no_subagent_spawns_one(self, mock_save, mock_gh, mock_read):
+        """When no subagent is running (started_ts=0, no result), should return spawn instruction."""
         from evolution.conductor import _handle_subagent_phase
+        mock_read.return_value = None  # No phase_result.json
         state = {
             "phase": "WORKING",
             "subagent_session_key": None,
@@ -115,13 +117,13 @@ class TestSubagentPhaseHandler:
     @patch("evolution.conductor._read_phase_result")
     @patch("evolution.conductor._save_state")
     def test_subagent_still_running(self, mock_save, mock_read):
-        """When subagent is running and no result, should skip."""
+        """When subagent was spawned recently and no result, should skip."""
         from evolution.conductor import _handle_subagent_phase
         mock_read.return_value = None
         state = {
             "phase": "WORKING",
-            "subagent_session_key": "some-key",
-            "subagent_started_ts": time.time() - 100,  # Recent
+            "subagent_session_key": None,  # Key not saved back — that's fine
+            "subagent_started_ts": time.time() - 100,  # Recent, within timeout
             "issue_number": 6,
         }
         result = _handle_subagent_phase(state)
@@ -131,12 +133,12 @@ class TestSubagentPhaseHandler:
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
     def test_subagent_timeout_triggers_diagnosing(self, mock_save, mock_gh, mock_read):
-        """When subagent times out, should transition to DIAGNOSING."""
+        """When subagent times out (started_ts past timeout), should transition to DIAGNOSING."""
         from evolution.conductor import _handle_subagent_phase
         mock_read.return_value = None
         state = {
             "phase": "WORKING",
-            "subagent_session_key": "some-key",
+            "subagent_session_key": None,  # Key not needed for timeout detection
             "subagent_started_ts": time.time() - 2000,  # Past timeout
             "issue_number": 6,
             "pr_number": None,
