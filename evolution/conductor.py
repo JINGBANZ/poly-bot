@@ -481,46 +481,19 @@ def _handle_subagent_phase(state: dict) -> dict:
     """Generic handler for phases that use subagents (WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING).
 
     Logic:
-    1. If no subagent running → build task and return spawn instruction
-    2. If phase_result.json exists → read result and handle transition
-    3. If subagent timed out → transition to DIAGNOSING
-    4. Otherwise → skip (subagent still running)
+    1. Always check phase_result.json first (subagent may have finished)
+    2. If subagent was spawned (started_ts > 0) and no result → check timeout
+    3. If nothing spawned yet → build task and return spawn instruction
+
+    NOTE: We gate on subagent_started_ts, NOT subagent_session_key.
+    The cron wrapper may not reliably write session keys back to state,
+    but started_ts is set by the conductor itself before returning the
+    spawn instruction, so it's always reliable.
     """
     phase = state["phase"]
-    subagent_key = state.get("subagent_session_key")
+    started_ts = state.get("subagent_started_ts", 0)
 
-    # No subagent running — spawn one
-    if not subagent_key:
-        task_builder = TASK_BUILDERS.get(phase)
-        if not task_builder:
-            _log(f"No task builder for phase {phase}")
-            state["phase"] = "IDLE"
-            _save_state(state)
-            return {"action": "error", "reason": f"No task builder for phase {phase}"}
-
-        try:
-            task = task_builder(state)
-        except Exception as e:
-            _log(f"Failed to build task for {phase}: {e}")
-            state["phase"] = "IDLE"
-            _save_state(state)
-            return {"action": "error", "reason": f"Task build failed for {phase}: {e}"}
-
-        timeout = PHASE_TIMEOUTS.get(phase, 1800)
-        state["subagent_started_ts"] = _now()
-        _save_state(state)
-
-        _log(f"Requesting spawn of {phase} subagent (timeout: {timeout}s)")
-        return {
-            "action": "spawn_subagent",
-            "phase": phase,
-            "task": task,
-            "timeout_seconds": timeout,
-            "issue_number": state.get("issue_number"),
-            "pr_number": state.get("pr_number"),
-        }
-
-    # Check if subagent finished (wrote phase_result.json)
+    # 1. Always check for results first — subagent may have finished
     result = _read_phase_result()
     if result is not None:
         _log(f"Phase result received for {phase}: {result.get('status')}")
@@ -528,32 +501,64 @@ def _handle_subagent_phase(state: dict) -> dict:
         state["subagent_started_ts"] = 0
         return _handle_phase_result(state, phase, result)
 
-    # Check timeout
-    if _phase_timed_out(state):
-        elapsed = int(_now() - state.get("subagent_started_ts", 0))
-        _log(f"{phase} subagent timed out after {elapsed}s")
-        state["subagent_session_key"] = None
-        state["subagent_started_ts"] = 0
-        _transition_to_diagnosing(state, phase)
+    # 2. If a subagent was spawned, check timeout or wait
+    if started_ts > 0:
+        if _phase_timed_out(state):
+            elapsed = int(_now() - started_ts)
+            _log(f"{phase} subagent timed out after {elapsed}s")
+            state["subagent_session_key"] = None
+            state["subagent_started_ts"] = 0
+            _transition_to_diagnosing(state, phase)
 
-        # Spawn diagnosing subagent immediately
-        try:
-            diag_task = _build_diagnosing_task(state)
-        except Exception as e:
-            _log(f"Failed to build diagnosing task: {e}")
-            return {"action": "timeout", "phase": phase, "reason": f"{phase} timed out after {elapsed}s"}
+            # Spawn diagnosing subagent immediately
+            try:
+                diag_task = _build_diagnosing_task(state)
+            except Exception as e:
+                _log(f"Failed to build diagnosing task: {e}")
+                return {"action": "timeout", "phase": phase, "reason": f"{phase} timed out after {elapsed}s"}
 
-        return {
-            "action": "spawn_subagent",
-            "phase": "DIAGNOSING",
-            "task": diag_task,
-            "timeout_seconds": PHASE_TIMEOUTS["DIAGNOSING"],
-            "issue_number": state.get("issue_number"),
-            "reason": f"{phase} timed out after {elapsed}s, diagnosing",
-        }
+            return {
+                "action": "spawn_subagent",
+                "phase": "DIAGNOSING",
+                "task": diag_task,
+                "timeout_seconds": PHASE_TIMEOUTS["DIAGNOSING"],
+                "issue_number": state.get("issue_number"),
+                "reason": f"{phase} timed out after {elapsed}s, diagnosing",
+            }
 
-    # Still running
-    return {"action": "skip", "reason": f"{phase} subagent still running"}
+        # Still within timeout — wait
+        elapsed = int(_now() - started_ts)
+        return {"action": "skip", "reason": f"{phase} subagent still running ({elapsed}s elapsed)"}
+
+    # 3. Nothing spawned yet — spawn one
+    task_builder = TASK_BUILDERS.get(phase)
+    if not task_builder:
+        _log(f"No task builder for phase {phase}")
+        state["phase"] = "IDLE"
+        _save_state(state)
+        return {"action": "error", "reason": f"No task builder for phase {phase}"}
+
+    try:
+        task = task_builder(state)
+    except Exception as e:
+        _log(f"Failed to build task for {phase}: {e}")
+        state["phase"] = "IDLE"
+        _save_state(state)
+        return {"action": "error", "reason": f"Task build failed for {phase}: {e}"}
+
+    timeout = PHASE_TIMEOUTS.get(phase, 1800)
+    state["subagent_started_ts"] = _now()
+    _save_state(state)
+
+    _log(f"Requesting spawn of {phase} subagent (timeout: {timeout}s)")
+    return {
+        "action": "spawn_subagent",
+        "phase": phase,
+        "task": task,
+        "timeout_seconds": timeout,
+        "issue_number": state.get("issue_number"),
+        "pr_number": state.get("pr_number"),
+    }
 
 
 # --- Phase result handlers ---
