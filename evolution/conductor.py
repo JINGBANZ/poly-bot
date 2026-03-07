@@ -28,7 +28,8 @@ REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from evolution import github_client
-from evolution.discover import discover_work
+from evolution.discover import get_next_audit_module
+from evolution.discover_fast import fast_discover
 from evolution.deploy import merge_and_deploy, check_health
 from evolution.performance import update_baseline
 
@@ -44,6 +45,7 @@ MAX_RETRIES_PER_ISSUE = 2      # Max times to retry an issue after diagnosis
 
 # Subagent timeouts per phase (seconds)
 PHASE_TIMEOUTS = {
+    "DISCOVERING": 900,   # 15 min
     "WORKING": 1500,      # 25 min
     "REVIEWING": 1800,    # 30 min
     "REVISING": 1500,     # 25 min
@@ -323,7 +325,15 @@ def _build_diagnosing_task(state: dict) -> str:
             .replace("{full_state}", json.dumps(safe_state, indent=2)))
 
 
+def _build_discovering_task(state: dict) -> str:
+    """Build the task string for a DISCOVERING subagent."""
+    template = _load_prompt("discovering")
+    next_module = get_next_audit_module()
+    return template.replace("{next_audit_module}", next_module)
+
+
 TASK_BUILDERS = {
+    "DISCOVERING": _build_discovering_task,
     "WORKING": lambda state: build_worker_task(
         state.get("issue_number"),
         state.get("phase_context", {}).get("issue_title", ""),
@@ -341,35 +351,56 @@ TASK_BUILDERS = {
 # --- Inline phase handlers (no subagent needed) ---
 
 def _handle_idle(state: dict) -> dict:
-    """IDLE: Transition to DISCOVERING immediately."""
-    _log("IDLE, transitioning to DISCOVERING")
+    """IDLE: Run fast discovery checks. If work found, go to WORKING.
+    If nothing, spawn DISCOVERING subagent for deeper analysis."""
+    _log("IDLE, running fast discovery checks")
     state["error"] = None
-    _transition(state, "DISCOVERING")
-    return _handle_discovering(state)
 
-
-def _handle_discovering(state: dict) -> dict:
-    """DISCOVERING: Find work via discover.py."""
     try:
-        result = discover_work(state)
+        result = fast_discover(state)
     except Exception as e:
-        _log(f"Discovery error: {e}")
-        state["phase"] = "IDLE"
-        _save_state(state)
-        return {"action": "error", "reason": f"Discovery failed: {e}"}
+        _log(f"Fast discovery error: {e}")
+        return {"action": "error", "reason": f"Fast discovery failed: {e}"}
 
-    if result["action"] == "skip":
-        _log(f"No work found: {result['reason']}")
-        state["phase"] = "IDLE"
-        _save_state(state)
+    # Fast checks found work — go straight to WORKING
+    if result["action"] in ("create_issue", "pick_issue"):
+        return _transition_to_working(state, result)
+
+    # Skip with no subagent (e.g. too many open issues)
+    if result.get("skip_subagent"):
+        _log(f"Skipping: {result['reason']}")
         return {"action": "skip", "reason": result["reason"]}
 
+    # Nothing found fast — spawn DISCOVERING subagent for deeper analysis
+    _log("Fast checks found nothing, spawning DISCOVERING subagent")
+    _transition(state, "DISCOVERING")
+
+    try:
+        task = _build_discovering_task(state)
+    except Exception as e:
+        _log(f"Failed to build discovering task: {e}")
+        state["phase"] = "IDLE"
+        _save_state(state)
+        return {"action": "error", "reason": f"Failed to build discovering task: {e}"}
+
+    state["subagent_started_ts"] = _now()
+    _save_state(state)
+
+    return {
+        "action": "spawn_subagent",
+        "phase": "DISCOVERING",
+        "task": task,
+        "timeout_seconds": PHASE_TIMEOUTS["DISCOVERING"],
+        "reason": "No fast work found, spawning deep discovery",
+    }
+
+
+def _transition_to_working(state: dict, result: dict) -> dict:
+    """Helper: transition from discovery result to WORKING phase."""
     issue = result.get("issue", {})
     issue_number = issue.get("number")
     if not issue_number:
         _log("Discovery returned no issue number")
-        state["phase"] = "IDLE"
-        _save_state(state)
         return {"action": "skip", "reason": "No issue number from discovery"}
 
     branch = f"improve/{issue_number}"
@@ -388,7 +419,6 @@ def _handle_discovering(state: dict) -> dict:
     }
     _transition(state, "WORKING")
 
-    # Build and return spawn instruction for the cron wrapper
     worker_task = build_worker_task(
         issue_number, issue_title, issue_body_text, branch,
         diagnosis=state.get("diagnosis"),
@@ -964,7 +994,77 @@ def _handle_diagnosing_result(state: dict, result: dict) -> dict:
     return {"action": "error", "reason": f"DIAGNOSING returned unexpected status: {status}"}
 
 
+def _handle_discovering_result(state: dict, result: dict) -> dict:
+    """Handle result from DISCOVERING subagent.
+
+    - "issue_found" → extract issue, transition to WORKING
+    - "no_work" → transition to IDLE
+    - "error" → log and transition to IDLE
+    """
+    status = result.get("status", "unknown")
+    details = result.get("details", {})
+
+    if status == "issue_found":
+        issue_number = details.get("issue_number")
+        issue_title = details.get("issue_title", "")
+        if not issue_number:
+            _log("DISCOVERING found issue but no issue number in result")
+            state["phase"] = "IDLE"
+            _save_state(state)
+            return {"action": "skip", "reason": "Discovery found issue but missing number"}
+
+        _log(f"DISCOVERING found issue #{issue_number}: {issue_title}")
+
+        # Fetch the full issue from GitHub for the body
+        try:
+            gh_issue = github_client.get_issue(issue_number)
+            issue_body = gh_issue.get("body", "")
+        except Exception:
+            issue_body = ""
+
+        branch = f"improve/{issue_number}"
+        state["issue_number"] = issue_number
+        state["branch"] = branch
+        state["pr_number"] = None
+        state["revision_count"] = 0
+        state["last_commit_sha"] = None
+        state["phase_context"] = {
+            "issue_title": issue_title,
+            "issue_body": issue_body,
+        }
+        _transition(state, "WORKING")
+
+        worker_task = build_worker_task(
+            issue_number, issue_title, issue_body, branch,
+            diagnosis=state.get("diagnosis"),
+        )
+
+        return {
+            "action": "spawn_subagent",
+            "phase": "WORKING",
+            "task": worker_task,
+            "timeout_seconds": PHASE_TIMEOUTS["WORKING"],
+            "issue_number": issue_number,
+            "issue_title": issue_title,
+            "branch": branch,
+            "reason": f"Discovery found issue #{issue_number}: {issue_title}",
+        }
+
+    if status == "no_work":
+        _log("DISCOVERING subagent found no work")
+        state["phase"] = "IDLE"
+        _save_state(state)
+        return {"action": "skip", "reason": "Deep discovery found no actionable work"}
+
+    # Error or unknown
+    _log(f"DISCOVERING subagent returned status: {status}")
+    state["phase"] = "IDLE"
+    _save_state(state)
+    return {"action": "skip", "reason": f"Discovery returned: {status}"}
+
+
 RESULT_HANDLERS = {
+    "DISCOVERING": _handle_discovering_result,
     "WORKING": _handle_working_result,
     "REVIEWING": _handle_reviewing_result,
     "REVISING": _handle_revising_result,
@@ -1010,11 +1110,10 @@ def _handle_max_revisions(state: dict) -> dict:
 # Inline phases are handled directly; subagent phases use the generic dispatcher
 INLINE_HANDLERS = {
     "IDLE": _handle_idle,
-    "DISCOVERING": _handle_discovering,
     "DEPLOYING": _handle_deploying,
 }
 
-SUBAGENT_PHASES = {"WORKING", "REVIEWING", "REVISING", "MONITORING", "DIAGNOSING"}
+SUBAGENT_PHASES = {"DISCOVERING", "WORKING", "REVIEWING", "REVISING", "MONITORING", "DIAGNOSING"}
 
 
 def run() -> dict:

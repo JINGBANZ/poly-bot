@@ -16,14 +16,14 @@ The conductor is a **pure dispatcher** — it only manages state transitions and
        ▼                    ▼
 ┌──────────────────────────────────────────────────────┐
 │              Specialized Subagents                   │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐            │
-│  │ WORKING  │ │REVIEWING │ │ REVISING │            │
-│  │(code fix)│ │(CI check)│ │(fix fail)│            │
-│  └──────────┘ └──────────┘ └──────────┘            │
-│  ┌───────────┐ ┌───────────┐                        │
-│  │MONITORING │ │DIAGNOSING │                        │
-│  │(health)   │ │(doctor)   │                        │
-│  └───────────┘ └───────────┘                        │
+│  ┌───────────┐ ┌──────────┐ ┌──────────┐           │
+│  │DISCOVERING│ │ WORKING  │ │REVIEWING │           │
+│  │(deep scan)│ │(code fix)│ │(CI check)│           │
+│  └───────────┘ └──────────┘ └──────────┘           │
+│  ┌──────────┐ ┌───────────┐ ┌───────────┐          │
+│  │ REVISING │ │MONITORING │ │DIAGNOSING │          │
+│  │(fix fail)│ │(health)   │ │(doctor)   │          │
+│  └──────────┘ └───────────┘ └───────────┘          │
 │         │                                            │
 │         ▼ writes phase_result.json                   │
 └──────────────────────────────────────────────────────┘
@@ -31,14 +31,23 @@ The conductor is a **pure dispatcher** — it only manages state transitions and
 
 ## State Machine
 
-The conductor (`conductor.py`) manages a state machine. **Inline phases** (IDLE, DISCOVERING, DEPLOYING) run directly. **Subagent phases** (WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING) spawn a specialized subagent and check for results on subsequent ticks.
+The conductor (`conductor.py`) manages a state machine. **Inline phases** (IDLE, DEPLOYING) run directly. **Subagent phases** (DISCOVERING, WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING) spawn a specialized subagent and check for results on subsequent ticks.
+
+### Two-Tier Discovery
+
+Discovery uses a **fast + deep** architecture:
+
+1. **Fast path** (`discover_fast.py`) — runs inline in IDLE, <1s. Checks inbox, open issues, performance baseline.
+2. **Deep path** (DISCOVERING subagent) — spawned only when fast checks find nothing. Runs 9 discovery categories via LLM subagent (up to 15 min).
+
+This means most ticks resolve instantly (pick an existing issue), and the expensive deep discovery only runs when there's truly nothing queued.
 
 ### States
 
 | State | Subagent? | Description | Transitions To |
 |-------|-----------|-------------|----------------|
-| **IDLE** | No | Ready for next cycle | → DISCOVERING |
-| **DISCOVERING** | No | Finding work: inbox → issues → performance → audit | → WORKING, IDLE |
+| **IDLE** | No | Fast discovery checks → WORKING or → DISCOVERING | → WORKING, DISCOVERING |
+| **DISCOVERING** | Yes | Deep analysis: 9 categories of discovery | → WORKING, IDLE |
 | **WORKING** | Yes | Worker subagent implementing the fix | → REVIEWING, DIAGNOSING |
 | **REVIEWING** | Yes | CI monitor checking PR status + acceptance criteria | → DEPLOYING, REVISING, DIAGNOSING |
 | **REVISING** | Yes | Fix CI failures / review issues, push to branch | → REVIEWING, DIAGNOSING |
@@ -49,9 +58,11 @@ The conductor (`conductor.py`) manages a state machine. **Inline phases** (IDLE,
 ### State Transitions
 
 ```
-IDLE ──(ready)──▶ DISCOVERING
+IDLE ──(fast check finds issue)──▶ WORKING [spawn subagent]
+IDLE ──(nothing fast)──▶ DISCOVERING [spawn subagent]
 DISCOVERING ──(issue found)──▶ WORKING [spawn subagent]
 DISCOVERING ──(no work)──▶ IDLE
+DISCOVERING ──(timeout)──▶ DIAGNOSING [spawn subagent]
 WORKING ──(result: commits pushed)──▶ REVIEWING [open PR, spawn subagent]
 WORKING ──(result: error/timeout)──▶ DIAGNOSING [spawn subagent]
 REVIEWING ──(result: ci_passed)──▶ DEPLOYING
@@ -85,6 +96,7 @@ Each subagent writes its result to `evolution/state/phase_result.json` when done
 ```
 
 Status values per phase:
+- **DISCOVERING**: `issue_found`, `no_work`, `error`
 - **REVIEWING**: `ci_passed`, `ci_failed`, `error`
 - **REVISING**: `fixes_pushed`, `cannot_fix`, `error`
 - **MONITORING**: `healthy`, `unhealthy`, `reverted`
@@ -94,6 +106,7 @@ Status values per phase:
 
 | Phase | Timeout | Rationale |
 |-------|---------|-----------|
+| DISCOVERING | 15 min (900s) | Deep analysis across 9 categories |
 | WORKING | 25 min (1500s) | Implementation time |
 | REVIEWING | 30 min (1800s) | CI can be slow |
 | REVISING | 25 min (1500s) | Targeted fixes |
@@ -102,16 +115,31 @@ Status values per phase:
 
 ## Discovery Priority
 
-The discovery module checks for work in this order:
+Discovery uses a two-tier system:
 
+### Fast Path (inline, <1s)
 1. **Inbox requests** (`evolution/inbox/`) — human-submitted config changes
 2. **Open issues by priority**: bug > regression > security > performance > strategy > audit > feature > tech-debt
-3. **Performance analysis** — detects metric degradation vs baseline
-4. **Module audit rotation** — cycles through bot modules for periodic review
+3. **Performance baseline comparison** — detects metric degradation vs baseline
+
+### Deep Path (DISCOVERING subagent, up to 15 min)
+Only runs when the fast path finds nothing. The subagent checks 9 categories in priority order, stopping at the first actionable finding:
+
+1. **Trade pattern analysis** — Analyze last 20 trades for win/loss patterns, edge decay
+2. **Position health scan** — Check open positions for overexposure, stale positions
+3. **Performance regression detection** — Compare current vs baseline metrics, analyze why
+4. **Market landscape review** — Scan for new high-volume market types we're not covering
+5. **Data feed discovery** — Identify new data sources that could improve edge
+6. **Competitor research** — Find other bots/strategies, learn from them
+7. **Code health scan** — TODO/FIXME comments, dead code, tech debt
+8. **Bug/regression issues** — Check bot logs for recurring errors
+9. **Module audit rotation** — Pick next module in rotation (no cooldown)
+
+Discovery results are logged to `evolution/state/discovery_log.jsonl`.
 
 ### Guardrails
 - Max 5 open agent-created issues at any time (prevents runaway)
-- No cooldown needed — MONITORING phase (30 min) provides post-deploy safety buffer
+- No cooldown on audits — they're the lowest priority and only run when nothing else is found
 - Max 3 revision attempts per issue before flagging for human
 - Max 2 retries per issue after diagnosis timeout
 - Auto-revert if unhealthy within 30 min monitoring window
@@ -121,7 +149,8 @@ The discovery module checks for work in this order:
 | File | Purpose |
 |------|---------|
 | `conductor.py` | Pure dispatcher state machine — the cron entry point |
-| `discover.py` | Issue discovery + performance analysis |
+| `discover.py` | Shared discovery constants, audit rotation logic |
+| `discover_fast.py` | Fast programmatic checks (inbox, issues, performance) |
 | `deploy.py` | Merge, deploy, health check, auto-revert |
 | `github_client.py` | GitHub API wrapper (issues, PRs, CI, comments) |
 | `performance.py` | Trade log analysis, baseline comparison, regime detection |
@@ -138,6 +167,7 @@ Each subagent phase has a specialized prompt template:
 | `prompts/revising.md` | REVISING | Fix CI failures, push corrections |
 | `prompts/monitoring.md` | MONITORING | 30 min health monitoring after deploy |
 | `prompts/diagnosing.md` | DIAGNOSING | Investigate any failure in any phase |
+| `prompts/discovering.md` | DISCOVERING | Deep discovery across 9 categories |
 
 ### State Files (`state/`)
 
@@ -149,6 +179,7 @@ Each subagent phase has a specialized prompt template:
 | `audit_rotation.json` | Which module was last audited |
 | `regime.json` | Current market regime classification |
 | `last_backtest.json` | Results of the last backtest run |
+| `discovery_log.jsonl` | Log of each discovery subagent run (categories checked, findings) |
 
 ### Inbox (`inbox/`)
 
@@ -226,4 +257,6 @@ The LLM review uses Claude via the Anthropic API. Add `ANTHROPIC_API_KEY` as a G
 
 ## Adding New Discovery Sources
 
-Edit `discover.py` and add a new `_check_*()` function. Call it in `discover_work()` in the appropriate priority position.
+- **Fast checks** (programmatic, <1s): Edit `discover_fast.py` and add a new `_check_*()` function.
+- **Deep checks** (LLM-powered): Edit `prompts/discovering.md` and add a new category section.
+- **Shared logic** (audit rotation, constants): Edit `discover.py`.

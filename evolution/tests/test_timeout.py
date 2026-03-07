@@ -1,4 +1,4 @@
-"""Tests for phase timeout detection, DIAGNOSING state, and build_worker_task."""
+"""Tests for phase timeout detection, subagent phase handling, and build_worker_task."""
 
 import json
 import time
@@ -12,34 +12,34 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
-class TestCheckPhaseTimeout:
-    """Test _check_phase_timeout helper."""
+class TestPhaseTimedOut:
+    """Test _phase_timed_out helper."""
 
     def test_no_timestamp_returns_false(self):
-        from evolution.conductor import _check_phase_timeout
-        state = {"phase_started_ts": 0}
-        assert _check_phase_timeout(state, 1800) is False
+        from evolution.conductor import _phase_timed_out
+        state = {"subagent_started_ts": 0, "phase": "WORKING"}
+        assert _phase_timed_out(state) is False
 
     def test_within_timeout_returns_false(self):
-        from evolution.conductor import _check_phase_timeout
-        state = {"phase_started_ts": time.time() - 100}  # 100s ago
-        assert _check_phase_timeout(state, 1800) is False
+        from evolution.conductor import _phase_timed_out
+        state = {"subagent_started_ts": time.time() - 100, "phase": "WORKING"}
+        assert _phase_timed_out(state) is False
 
     def test_exceeded_timeout_returns_true(self):
-        from evolution.conductor import _check_phase_timeout
-        state = {"phase_started_ts": time.time() - 2000}  # 2000s ago
-        assert _check_phase_timeout(state, 1800) is True
+        from evolution.conductor import _phase_timed_out
+        state = {"subagent_started_ts": time.time() - 2000, "phase": "WORKING"}
+        assert _phase_timed_out(state) is True
 
     def test_exact_boundary(self):
-        from evolution.conductor import _check_phase_timeout
-        # Just past the timeout
-        state = {"phase_started_ts": time.time() - 1801}
-        assert _check_phase_timeout(state, 1800) is True
+        from evolution.conductor import _phase_timed_out
+        # Just past the WORKING timeout (1500s)
+        state = {"subagent_started_ts": time.time() - 1501, "phase": "WORKING"}
+        assert _phase_timed_out(state) is True
 
     def test_missing_key_returns_false(self):
-        from evolution.conductor import _check_phase_timeout
-        state = {}
-        assert _check_phase_timeout(state, 1800) is False
+        from evolution.conductor import _phase_timed_out
+        state = {"phase": "WORKING"}
+        assert _phase_timed_out(state) is False
 
 
 class TestBuildWorkerTask:
@@ -67,9 +67,8 @@ class TestBuildWorkerTask:
         assert "Previous Attempt Failed" not in task
 
     def test_missing_template_uses_fallback(self):
-        from evolution.conductor import build_worker_task, WORKER_PROMPT_FILE
-        original = WORKER_PROMPT_FILE
-        with patch.object(Path, 'read_text', side_effect=FileNotFoundError):
+        from evolution.conductor import build_worker_task
+        with patch("evolution.conductor._load_prompt", side_effect=RuntimeError("not found")):
             task = build_worker_task(1, "T", "B", "improve/1")
             assert "1" in task
 
@@ -79,72 +78,168 @@ class TestTransition:
 
     def test_transition_sets_timestamp(self):
         from evolution.conductor import _transition
-        state = {"phase": "IDLE", "phase_started_ts": 0}
+        state = {"phase": "IDLE", "phase_started_ts": 0,
+                 "subagent_session_key": "old", "subagent_started_ts": 100}
         before = time.time()
         with patch("evolution.conductor._save_state"):
             _transition(state, "WORKING")
         after = time.time()
         assert state["phase"] == "WORKING"
         assert before <= state["phase_started_ts"] <= after
+        assert state["subagent_session_key"] is None
+        assert state["subagent_started_ts"] == 0
 
 
-class TestHandleWorkingTimeout:
-    """Test that _handle_working detects timeouts."""
+class TestSubagentPhaseHandler:
+    """Test the generic _handle_subagent_phase dispatcher."""
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_working_timeout_triggers_diagnosing(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_working
+    def test_no_subagent_spawns_one(self, mock_save, mock_gh):
+        """When no subagent is running, should return spawn instruction."""
+        from evolution.conductor import _handle_subagent_phase
         state = {
             "phase": "WORKING",
-            "branch": "improve/6",
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
             "issue_number": 6,
-            "phase_started_ts": time.time() - 2000,  # 33 min ago
-            "last_commit_sha": None,
+            "pr_number": None,
+            "branch": "improve/6",
+            "phase_context": {"issue_title": "Fix bug", "issue_body": "Details"},
             "diagnosis": None,
-            "retry_count": 0,
         }
-        mock_gh.branch_exists.return_value = False
-        result = _handle_working(state)
-        assert result["action"] == "timeout"
-        assert state["phase"] == "DIAGNOSING"
-        assert state["diagnosis"] is not None
+        result = _handle_subagent_phase(state)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "WORKING"
 
-    @patch("evolution.conductor.github_client")
-    def test_working_no_timeout_continues(self, mock_gh):
-        from evolution.conductor import _handle_working
+    @patch("evolution.conductor._read_phase_result")
+    @patch("evolution.conductor._save_state")
+    def test_subagent_still_running(self, mock_save, mock_read):
+        """When subagent is running and no result, should skip."""
+        from evolution.conductor import _handle_subagent_phase
+        mock_read.return_value = None
         state = {
             "phase": "WORKING",
-            "branch": "improve/6",
+            "subagent_session_key": "some-key",
+            "subagent_started_ts": time.time() - 100,  # Recent
             "issue_number": 6,
-            "phase_started_ts": time.time() - 100,  # 100s ago
-            "last_commit_sha": None,
         }
-        mock_gh.branch_exists.return_value = False
-        result = _handle_working(state)
+        result = _handle_subagent_phase(state)
         assert result["action"] == "skip"
 
+    @patch("evolution.conductor._read_phase_result")
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_subagent_timeout_triggers_diagnosing(self, mock_save, mock_gh, mock_read):
+        """When subagent times out, should transition to DIAGNOSING."""
+        from evolution.conductor import _handle_subagent_phase
+        mock_read.return_value = None
+        state = {
+            "phase": "WORKING",
+            "subagent_session_key": "some-key",
+            "subagent_started_ts": time.time() - 2000,  # Past timeout
+            "issue_number": 6,
+            "pr_number": None,
+            "branch": "improve/6",
+            "diagnosis": None,
+            "phase_context": {},
+        }
+        result = _handle_subagent_phase(state)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "DIAGNOSING"
+        assert state["phase"] == "DIAGNOSING"
 
-class TestHandleDiagnosing:
-    """Test DIAGNOSING phase behavior."""
+
+class TestHandleWorkingResult:
+    """Test WORKING result handler."""
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_retry_on_first_timeout(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_diagnosing
+    def test_working_error_goes_to_diagnosing(self, mock_save, mock_gh):
+        from evolution.conductor import _handle_working_result
+        state = {
+            "phase": "WORKING",
+            "branch": "improve/6",
+            "issue_number": 6,
+            "pr_number": None,
+            "phase_context": {},
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
+        }
+        result_data = {"status": "error", "errors": ["something broke"]}
+        result = _handle_working_result(state, result_data)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "DIAGNOSING"
+
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_working_success_opens_pr(self, mock_save, mock_gh):
+        from evolution.conductor import _handle_working_result
+        mock_gh.branch_exists.return_value = True
+        mock_gh.get_branch_commits.return_value = [{"sha": "abc123"}]
+        mock_gh.create_pr.return_value = {"number": 10}
+
+        state = {
+            "phase": "WORKING",
+            "branch": "improve/6",
+            "issue_number": 6,
+            "pr_number": None,
+            "phase_context": {},
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
+        }
+        result_data = {"status": "commits_pushed"}
+        result = _handle_working_result(state, result_data)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "REVIEWING"
+        assert state["pr_number"] == 10
+
+
+class TestHandleReviewingResult:
+    """Test REVIEWING result handler."""
+
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_ci_passed_goes_to_deploying(self, mock_save, mock_gh):
+        from evolution.conductor import _handle_reviewing_result
+        state = {
+            "phase": "REVIEWING",
+            "pr_number": 10,
+            "issue_number": 6,
+            "branch": "improve/6",
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
+        }
+        result_data = {"status": "ci_passed", "details": {}}
+        result = _handle_reviewing_result(state, result_data)
+        assert result["action"] == "ci_passed"
+        assert state["phase"] == "DEPLOYING"
+
+
+class TestHandleDiagnosingResult:
+    """Test DIAGNOSING result handler."""
+
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_retry_increments_count(self, mock_save, mock_gh):
+        from evolution.conductor import _handle_diagnosing_result
         state = {
             "phase": "DIAGNOSING",
-            "phase_started_ts": time.time(),
             "issue_number": 6,
             "branch": "improve/6",
             "pr_number": None,
             "retry_count": 0,
-            "diagnosis": "WORKING timed out",
-            "last_commit_sha": None,
+            "diagnosis": "timed out",
+            "phase_context": {},
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
         }
-        mock_gh.branch_exists.return_value = False
-        mock_gh.post_comment.return_value = None
-        result = _handle_diagnosing(state)
+        result_data = {"status": "retry", "details": {"root_cause": "timeout"}}
+        result = _handle_diagnosing_result(state, result_data)
         assert result["action"] == "retry"
         assert state["retry_count"] == 1
         assert state["phase"] == "IDLE"
@@ -152,83 +247,37 @@ class TestHandleDiagnosing:
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
     def test_needs_human_after_max_retries(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_diagnosing, MAX_RETRIES_PER_ISSUE
+        from evolution.conductor import _handle_diagnosing_result, MAX_RETRIES_PER_ISSUE
         state = {
             "phase": "DIAGNOSING",
-            "phase_started_ts": time.time(),
             "issue_number": 6,
             "branch": "improve/6",
             "pr_number": None,
             "retry_count": MAX_RETRIES_PER_ISSUE,
-            "diagnosis": "WORKING timed out again",
-            "last_commit_sha": None,
+            "diagnosis": "timed out again",
+            "phase_context": {},
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
         }
-        mock_gh.branch_exists.return_value = False
-        mock_gh.post_comment.return_value = None
-        mock_gh.add_label.return_value = None
-        result = _handle_diagnosing(state)
+        result_data = {"status": "retry", "details": {"root_cause": "still broken"}}
+        result = _handle_diagnosing_result(state, result_data)
         assert result["action"] == "needs_human"
         assert state["phase"] == "IDLE"
-        assert state["retry_count"] == 0
         mock_gh.add_label.assert_called_with(6, "needs-human")
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_diagnosing_self_timeout(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_diagnosing
+    def test_needs_human_direct(self, mock_save, mock_gh):
+        from evolution.conductor import _handle_diagnosing_result
         state = {
             "phase": "DIAGNOSING",
-            "phase_started_ts": time.time() - 700,  # 11+ min
             "issue_number": 6,
             "branch": "improve/6",
             "pr_number": None,
             "retry_count": 0,
-            "diagnosis": "test",
+            "phase_context": {},
         }
-        result = _handle_diagnosing(state)
-        assert result["action"] == "diag_timeout"
-        assert state["phase"] == "IDLE"
-
-
-class TestHandleReviewingTimeout:
-    """Test that _handle_reviewing detects timeouts."""
-
-    @patch("evolution.conductor.github_client")
-    @patch("evolution.conductor._save_state")
-    def test_reviewing_timeout(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_reviewing
-        state = {
-            "phase": "REVIEWING",
-            "pr_number": 10,
-            "issue_number": 6,
-            "phase_started_ts": time.time() - 2000,
-            "diagnosis": None,
-            "retry_count": 0,
-            "branch": "improve/6",
-        }
-        result = _handle_reviewing(state)
-        assert result["action"] == "timeout"
-        assert state["phase"] == "DIAGNOSING"
-
-
-class TestHandleRevisingTimeout:
-    """Test that _handle_revising detects timeouts."""
-
-    @patch("evolution.conductor.github_client")
-    @patch("evolution.conductor._save_state")
-    def test_revising_timeout(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_revising
-        state = {
-            "phase": "REVISING",
-            "branch": "improve/6",
-            "issue_number": 6,
-            "pr_number": 10,
-            "phase_started_ts": time.time() - 2000,
-            "last_commit_sha": "abc",
-            "revision_count": 1,
-            "diagnosis": None,
-            "retry_count": 0,
-        }
-        result = _handle_revising(state)
-        assert result["action"] == "timeout"
-        assert state["phase"] == "DIAGNOSING"
+        result_data = {"status": "needs_human", "details": {"root_cause": "too complex"}}
+        result = _handle_diagnosing_result(state, result_data)
+        assert result["action"] == "needs_human"
