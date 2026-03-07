@@ -26,6 +26,7 @@ Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 m
 3. **Commit and push** after any code change
 4. **Builder API credentials** needed for redemption — stored in `/home/ubuntu/.openclaw/.polymarket-env`
 5. If redemption fails with 401: credentials need refresh at polymarket.com/settings → Builder tab
+6. **NEVER write to live state files during testing.** `state/` and `evolution/state/` contain live runtime data. Use temp directories or mock data for tests. Writing placeholder/test data to `evolution/state/evolution_state.json` will corrupt the live evolution loop.
 
 ## State Files
 | File | Purpose |
