@@ -372,54 +372,56 @@ def run_cycle(dry_run=False) -> dict:
             bid_price, bid_depth = best_bid(book)
 
             if bid_price < config.MIN_SELL_PRICE or bid_depth < config.MIN_BID_DEPTH_USD:
-                # No market liquidity — track the failure and check escalation
-                if not dry_run:
-                    entry = record_failed_sl(
-                        pos.token_id, pos.title, pos.pnl_pct,
-                        bid_price, bid_depth,
-                    )
-                    attempts = entry["failed_attempts"]
+                # No market liquidity — ALWAYS track the failure and check escalation
+                # (illiquid SL tracking is position management, not new trade entry,
+                #  so it must run even when circuit breaker sets dry_run=True — fix #18)
+                entry = record_failed_sl(
+                    pos.token_id, pos.title, pos.pnl_pct,
+                    bid_price, bid_depth,
+                )
+                attempts = entry["failed_attempts"]
 
-                    # Check if we should escalate
-                    escalate, esc_reason = should_escalate(pos.token_id, pos.pnl_pct)
+                # Check if we should escalate (always, regardless of dry_run)
+                escalate, esc_reason = should_escalate(pos.token_id, pos.pnl_pct)
 
-                    if escalate and not is_escalated(pos.token_id):
-                        # ESCALATION: force-sell at whatever price or alert
-                        if bid_price > 0 and bid_depth > 0:
-                            # There IS a bid, just below our thresholds — force sell
-                            log(f"  🚨 ESCALATION: force-selling {pos.title[:40]} — {esc_reason}")
-                            write_alert(
-                                f"🚨 ILLIQUID ESCALATION: {pos.title}\n"
-                                f"Reason: {esc_reason}\n"
-                                f"PnL: {pos.pnl_pct:.0%} | Bid: ${bid_price:.4f} | Depth: ${bid_depth:.2f}\n"
-                                f"Forcing sell at available price",
-                                severity="CRITICAL",
-                            )
-                            result = execute_sell(
-                                pos.token_id, pos.size, pos.title,
-                                reason=f"{gr.action}_FORCED",
-                                price=bid_price, pnl=pos.pnl,
-                            )
-                            mark_escalated(pos.token_id, "force_sell")
-                        else:
-                            # Truly zero liquidity — alert human
-                            log(f"  🚨 ESCALATION: alerting human for {pos.title[:40]} — {esc_reason}")
-                            write_alert(
-                                f"🚨 ILLIQUID ESCALATION — NEEDS HUMAN:\n"
-                                f"{pos.title}\n"
-                                f"Reason: {esc_reason}\n"
-                                f"PnL: {pos.pnl_pct:.0%} | {attempts} failed sell attempts\n"
-                                f"No bids available — manual intervention required",
-                                severity="CRITICAL",
-                            )
-                            mark_escalated(pos.token_id, "alert_human")
+                if escalate and not is_escalated(pos.token_id):
+                    # ESCALATION: force-sell at whatever price or alert
+                    # Force-sell is allowed even during circuit breaker — it reduces
+                    # exposure rather than increasing it.
+                    if bid_price > 0 and bid_depth > 0:
+                        # There IS a bid, just below our thresholds — force sell
+                        log(f"  🚨 ESCALATION: force-selling {pos.title[:40]} — {esc_reason}")
+                        write_alert(
+                            f"🚨 ILLIQUID ESCALATION: {pos.title}\n"
+                            f"Reason: {esc_reason}\n"
+                            f"PnL: {pos.pnl_pct:.0%} | Bid: ${bid_price:.4f} | Depth: ${bid_depth:.2f}\n"
+                            f"Forcing sell at available price",
+                            severity="CRITICAL",
+                        )
+                        result = execute_sell(
+                            pos.token_id, pos.size, pos.title,
+                            reason=f"{gr.action}_FORCED",
+                            price=bid_price, pnl=pos.pnl,
+                        )
+                        mark_escalated(pos.token_id, "force_sell")
                     else:
-                        # Not yet escalated — try limit sell + log
+                        # Truly zero liquidity — alert human
+                        log(f"  🚨 ESCALATION: alerting human for {pos.title[:40]} — {esc_reason}")
+                        write_alert(
+                            f"🚨 ILLIQUID ESCALATION — NEEDS HUMAN:\n"
+                            f"{pos.title}\n"
+                            f"Reason: {esc_reason}\n"
+                            f"PnL: {pos.pnl_pct:.0%} | {attempts} failed sell attempts\n"
+                            f"No bids available — manual intervention required",
+                            severity="CRITICAL",
+                        )
+                        mark_escalated(pos.token_id, "alert_human")
+                else:
+                    # Not yet escalated — try limit sell + log
+                    if not dry_run:
                         _try_limit_sell(pos, book, reason=gr.action)
-                        if _state_changed(pos.token_id, gr.action, "no_liquidity"):
-                            log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity ({attempts} attempts)")
-                elif _state_changed(pos.token_id, gr.action, "no_liquidity"):
-                    log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity, holding")
+                    if _state_changed(pos.token_id, gr.action, "no_liquidity"):
+                        log(f"  [{gr.action}] {pos.title[:40]}: bid ${bid_price:.2f}, depth ${bid_depth:.2f} — no liquidity ({attempts} attempts)")
                 continue
 
             # Has liquidity — alert and execute (clear any illiquid tracking)
