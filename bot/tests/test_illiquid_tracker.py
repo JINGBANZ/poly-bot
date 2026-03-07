@@ -63,12 +63,12 @@ def test_escalation_on_max_attempts():
 
 
 def test_escalation_on_deep_loss():
-    """Should escalate on deep loss (>2x SL) after a few attempts."""
+    """Should escalate on deep loss (>1.5x SL) after a few attempts."""
     from bot.illiquid_tracker import record_failed_sl, should_escalate
     from bot.config import STOP_LOSS_PCT
 
-    # Loss of 90% when SL is 50% = 1.8x SL threshold, need 2x
-    pnl_pct = -(STOP_LOSS_PCT * 2.1)  # > 2x stop-loss
+    # Loss of 80% when SL is 50% = 1.6x SL threshold, need 1.5x
+    pnl_pct = -(STOP_LOSS_PCT * 1.6)  # > 1.5x stop-loss
 
     for i in range(3):
         record_failed_sl("tok4", "Deep Loss", pnl_pct, 0.01, 1.0)
@@ -141,7 +141,7 @@ def test_deep_loss_needs_minimum_attempts():
     from bot.illiquid_tracker import record_failed_sl, should_escalate
     from bot.config import STOP_LOSS_PCT
 
-    pnl_pct = -(STOP_LOSS_PCT * 2.5)
+    pnl_pct = -(STOP_LOSS_PCT * 1.6)  # > 1.5x stop-loss
 
     # Only 1 attempt — should not escalate yet even with deep loss
     record_failed_sl("tok10", "Deep but new", pnl_pct, 0.01, 0.5)
@@ -154,6 +154,39 @@ def test_deep_loss_needs_minimum_attempts():
     escalate, reason = should_escalate("tok10", pnl_pct)
     assert escalate
     assert "deep_loss" in reason
+
+
+def test_deep_loss_escalation_at_75pct():
+    """Deep loss escalation triggers at 1.5x stop-loss (75% loss with 50% SL).
+
+    Verifies fix for issue #19: DEEP_LOSS_MULTIPLIER was 2.0 (requiring 100%
+    loss, unreachable on Polymarket). Now 1.5, so 75% loss triggers it.
+    """
+    from bot.illiquid_tracker import (
+        record_failed_sl, should_escalate, DEEP_LOSS_MULTIPLIER,
+    )
+    from bot.config import STOP_LOSS_PCT
+
+    assert DEEP_LOSS_MULTIPLIER == 1.5, "DEEP_LOSS_MULTIPLIER should be 1.5"
+
+    # 75% loss exactly meets the threshold (50% * 1.5 = 75%)
+    threshold = STOP_LOSS_PCT * DEEP_LOSS_MULTIPLIER
+    pnl_at_threshold = -threshold  # -0.75
+
+    for i in range(3):
+        record_failed_sl("tok_75", "75% loss test", pnl_at_threshold, 0.02, 1.0)
+
+    escalate, reason = should_escalate("tok_75", pnl_at_threshold)
+    assert escalate, f"Should escalate at exactly {threshold:.0%} loss"
+    assert "deep_loss" in reason
+
+    # 70% loss should NOT trigger (below 75% threshold)
+    pnl_below = -0.70
+    for i in range(3):
+        record_failed_sl("tok_70", "70% loss test", pnl_below, 0.03, 2.0)
+
+    escalate2, _ = should_escalate("tok_70", pnl_below)
+    assert not escalate2, "Should NOT escalate at 70% loss (below 75% threshold)"
 
 
 def test_illiquid_tracker_imports():
