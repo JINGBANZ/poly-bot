@@ -739,7 +739,7 @@ def _handle_working_result(state: dict, result: dict) -> dict:
         _log(f"Opened PR #{pr_number}")
         state["pr_number"] = pr_number
     except RuntimeError as e:
-        if "A pull request already exists" in str(e):
+        if "already exists" in str(e).lower() or "Validation Failed" in str(e):
             _log("PR already exists, looking up...")
             try:
                 prs = github_client._request("get", "/pulls", params={"head": f"JINGBANZ:{branch}", "state": "open"})
