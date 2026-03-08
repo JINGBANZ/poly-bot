@@ -267,6 +267,11 @@ def test_config_constants():
     assert hasattr(config, "WHALE_FOLLOW_MAX_USD")
     assert config.WHALE_PRICE_MOVE_THRESHOLD == 0.05
     assert config.WHALE_FOLLOW_MAX_USD <= config.MAX_POSITION_USD
+    # Risk management (fix #29)
+    assert hasattr(config, "MIN_EDGE_MULTIPLE")
+    assert config.STOP_LOSS_PCT == 0.35, "SL should be 35% (fix #29)"
+    assert config.MIN_REWARD_RISK_RATIO == 2.0, "R:R should be 2.0 (fix #29)"
+    assert config.MIN_EDGE_MULTIPLE == 2.0, "Edge multiple should be 2.0 (fix #29)"
 
 
 def test_whale_monitor_imports():

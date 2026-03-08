@@ -21,7 +21,7 @@ ALERTS_FILE = os.path.join(STATE_DIR, "pending_alerts.jsonl")
 LOG_FILE = os.path.join(LOGS_DIR, "bot.log")
 
 # Trading rules
-STOP_LOSS_PCT = 0.50          # Sell if down 50% from entry
+STOP_LOSS_PCT = 0.35          # Sell if down 35% from entry (fix #29: tightened from 50%)
 TAKE_PROFIT_PCT = 2.00        # Take profit at 200% gain
 MIN_SELL_PRICE = 0.05         # Never sell below 5¢
 MIN_BID_DEPTH_USD = 5.0       # Need $5+ of bids to sell into
@@ -31,8 +31,9 @@ VALUE_ZONE_MIN = 0.10         # Only enter above 10¢
 VALUE_ZONE_MAX = 0.25         # Only enter below 25¢ (Phase 63: backtest showed 24.2% YES resolution rate across 1498 markets; positive EV only below 25¢)
 
 # Risk/Reward guardrails
-MIN_REWARD_RISK_RATIO = 1.5   # Minimum reward-to-risk ratio before entry (fix #23)
+MIN_REWARD_RISK_RATIO = 2.0   # Minimum reward-to-risk ratio before entry (fix #29: raised from 1.5)
 MIN_MARKET_DURATION_DAYS = 3  # Reject markets expiring within this many days (fix #23)
+MIN_EDGE_MULTIPLE = 2.0       # Reject if edge < this × (slippage + SL distance) (fix #29)
 
 # Orderbook / limit orders
 MAX_SPREAD_PCT = 0.10         # Reject trades with spread > 10%

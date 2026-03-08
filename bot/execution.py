@@ -9,6 +9,11 @@ from .logger import log
 TRADE_LOG = os.path.join(config.STATE_DIR, "trade_log.jsonl")
 OPEN_ORDERS_FILE = os.path.join(config.STATE_DIR, "open_orders.json")
 
+# Sell cooldown: prevent double-sells of the same token within a short window (fix #29).
+# After a successful sell, the position may still appear in the API for a few cycles.
+_SELL_COOLDOWN_SEC = 3600  # 1 hour cooldown after a successful sell
+_recent_sells = {}  # token_id -> timestamp of last successful sell
+
 
 def log_trade(action: str, name: str, price: float, shares: float,
               amount_usd: float = 0, profit: float = None,
@@ -220,7 +225,7 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
     """
     from .api import market_buy
     from .alerts import write_alert
-    from .guardrails import check_reward_risk_ratio, check_market_duration
+    from .guardrails import check_reward_risk_ratio, check_market_duration, check_minimum_edge
 
     # LAST-RESORT STALE PRICE GUARD: Never buy above 85¢ unless explicitly
     # flagged. If you're paying 85¢+ the expected edge is <15¢ — not worth
@@ -229,12 +234,19 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: entry_price {entry_price:.2f} > 85¢ ceiling. Refusing buy.")
         return {"success": False, "error": f"Price {entry_price:.2f} exceeds 85¢ safety ceiling"}
 
-    # Risk/reward ratio check (fix #23): ensure potential reward justifies the risk
+    # Risk/reward ratio check (fix #23/#29): ensure potential reward justifies the risk
     if entry_price > 0:
         rr_ok, rr_msg = check_reward_risk_ratio(entry_price)
         if not rr_ok:
             log(f"  🛑 EXECUTION GUARD: {market_name[:50]} — {rr_msg}")
             return {"success": False, "error": f"Risk/reward filter: {rr_msg}"}
+
+    # Minimum edge check (fix #29): reject trades where edge < 2x (slippage + SL distance)
+    if entry_price > 0:
+        edge_ok, edge_msg = check_minimum_edge(entry_price)
+        if not edge_ok:
+            log(f"  🛑 EXECUTION GUARD: {market_name[:50]} — {edge_msg}")
+            return {"success": False, "error": f"Edge filter: {edge_msg}"}
 
     # Market duration check (fix #23): reject markets expiring too soon
     if end_date:
@@ -260,6 +272,19 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         return {"success": False, "result": result}
 
 
+def is_sell_on_cooldown(token_id: str) -> bool:
+    """Check if a token was recently sold and is still on cooldown (fix #29).
+    
+    Prevents double-sells when the Polymarket API is slow to update
+    position data after a successful sell.
+    """
+    import time
+    last_sell = _recent_sells.get(token_id)
+    if last_sell is None:
+        return False
+    return (time.time() - last_sell) < _SELL_COOLDOWN_SEC
+
+
 def execute_sell(token_id: str, size: float, market_name: str,
                  reason: str, price: float = 0, pnl: float = 0) -> dict:
     """Complete sell pipeline: sell → log → alert. Returns result dict.
@@ -272,12 +297,18 @@ def execute_sell(token_id: str, size: float, market_name: str,
         price: Current bid price (for logging)
         pnl: Profit/loss on this position
     """
+    import time as _time
     from .api import market_sell
     from .alerts import write_alert
 
     if size <= 0:
         log(f"  🛑 EXECUTION GUARD: size={size} is non-positive. Refusing sell.")
         return {"success": False, "error": "Non-positive sell size"}
+
+    # Sell cooldown check (fix #29): prevent double-sells from stale API data
+    if is_sell_on_cooldown(token_id):
+        log(f"  ⏳ SELL COOLDOWN: {market_name[:50]} — sold recently, skipping")
+        return {"success": False, "error": "Sell cooldown active"}
 
     # market_sell amount = number of shares for SELL orders (NOT dollar amount).
     # Previously this was `size * price` which sold far fewer shares than intended
@@ -288,6 +319,8 @@ def execute_sell(token_id: str, size: float, market_name: str,
         log(f"  ✅ Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
         write_alert(f"✅ SOLD: {market_name}\n{size:.1f} shares for ~${sell_value_usd:.2f}\nReason: {reason}")
         log_trade("SELL", market_name, price, size, profit=pnl, reason=reason, token_id=token_id)
+        # Record sell for cooldown tracking (fix #29)
+        _recent_sells[token_id] = _time.time()
         return {"success": True, "result": result}
     else:
         log(f"  ❌ Sell failed: {market_name[:50]}: {result}")

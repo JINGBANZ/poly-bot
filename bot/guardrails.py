@@ -183,6 +183,63 @@ def check_reward_risk_ratio(entry_price: float,
     return True, f"R:R {ratio:.2f}:1 OK"
 
 
+def check_minimum_edge(entry_price: float,
+                       estimated_fair_value: float = None,
+                       stop_loss_pct: float = None,
+                       slippage_pct: float = 0.02,
+                       min_edge_multiple: float = None,
+                       max_payout: float = 1.0) -> tuple[bool, str]:
+    """Check if a trade has enough edge to justify the risk.
+
+    For binary tokens, edge = max_payout - entry_price (potential upside
+    if the event resolves YES). The SL distance is entry_price × stop_loss_pct.
+    We require: edge ≥ min_edge_multiple × (slippage + SL distance).
+
+    This filters out trades where normal price noise would trigger the
+    stop-loss before the thesis can play out.
+
+    Args:
+        entry_price: Price at which we'd buy the token.
+        estimated_fair_value: Optional model fair value (unused for now,
+            reserved for when we have probability estimates).
+        stop_loss_pct: Fractional stop-loss threshold (default from config).
+        slippage_pct: Expected slippage as fraction of entry (default 2%).
+        min_edge_multiple: Minimum edge / (slippage + SL) ratio (default from config).
+        max_payout: Binary token payout ceiling (default $1.00).
+
+    Returns:
+        (ok, reason) — ok is True if edge is sufficient.
+    """
+    if stop_loss_pct is None:
+        stop_loss_pct = config.STOP_LOSS_PCT
+    if min_edge_multiple is None:
+        min_edge_multiple = config.MIN_EDGE_MULTIPLE
+
+    if entry_price <= 0 or entry_price >= max_payout:
+        return False, f"Invalid entry price {entry_price:.2f}"
+
+    # Edge: potential upside to payout ceiling
+    edge = max_payout - entry_price
+
+    # Cost of being wrong: slippage + stop-loss distance
+    sl_distance = entry_price * stop_loss_pct
+    slippage = entry_price * slippage_pct
+    risk_cost = slippage + sl_distance
+
+    if risk_cost <= 0:
+        return True, "Zero risk cost"
+
+    edge_ratio = edge / risk_cost
+
+    if edge_ratio < min_edge_multiple:
+        msg = (f"Insufficient edge: {edge_ratio:.2f}x < {min_edge_multiple:.1f}x minimum "
+               f"(edge=${edge:.3f}, SL=${sl_distance:.3f}, slippage=${slippage:.3f})")
+        log(f"  🚫 REJECTED: {msg}")
+        return False, msg
+
+    return True, f"Edge {edge_ratio:.2f}x OK (edge=${edge:.3f} vs risk=${risk_cost:.3f})"
+
+
 def check_market_duration(end_date_str: str,
                           min_days: int = None) -> tuple[bool, str]:
     """Check if a market has enough time before expiry.
