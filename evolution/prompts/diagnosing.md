@@ -38,6 +38,17 @@ What was the state when it failed?
 ### 2. Investigate Root Cause
 You have full freedom to investigate. Check:
 
+**IMPORTANT: Check git branch first!**
+If the failed phase was WORKING, the most common failure is that the worker
+completed its code changes but failed to write `phase_result.json`. Check:
+```bash
+cd /home/ubuntu/.openclaw/workspace/polymarket-bot
+# Does the branch exist with commits?
+git log --oneline origin/{branch} 2>/dev/null | head -5
+# If commits exist, the work was DONE — the communication failed, not the work.
+# In this case, report status="resolved" with recommended_phase="REVIEWING"
+```
+
 **Git state:**
 ```bash
 cd /home/ubuntu/.openclaw/workspace/polymarket-bot

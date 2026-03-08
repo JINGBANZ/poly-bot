@@ -71,6 +71,36 @@ Criteria Verification:
 - [x] <each acceptance criterion and how it was met>
 ```
 
+## Writing Your Result (MANDATORY)
+
+When your work is complete and pushed, you MUST write `evolution/state/phase_result.json`:
+
+```python
+import json
+from pathlib import Path
+from datetime import datetime, timezone
+
+result = {
+    "phase": "WORKING",
+    "status": "complete",  # or "error" if you couldn't fix it
+    "details": {
+        "summary": "Brief description of what you changed",
+        "files_changed": ["list", "of", "files"],
+        "commits": ["commit SHA(s)"],
+    },
+    "errors": [],  # list any errors encountered
+    "timestamp": datetime.now(timezone.utc).isoformat(),
+}
+
+state_dir = Path("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state")
+state_dir.mkdir(parents=True, exist_ok=True)
+(state_dir / "phase_result.json").write_text(json.dumps(result, indent=2))
+```
+
+⚠️ **The conductor waits for this file to detect completion.** If you don't write it,
+your work will be treated as a timeout even though your code changes are correct.
+ALWAYS write this file as your very last action.
+
 ## Testing
 Before committing, verify:
 1. `python -m pytest bot/tests/test_smoke.py -q --tb=line` passes
