@@ -229,3 +229,109 @@ def test_market_duration_exact_boundary():
     future = (datetime.now(timezone.utc) + timedelta(days=3, minutes=1)).isoformat()
     ok, msg = check_market_duration(future, min_days=3)
     assert ok
+
+
+# === Edge case tests (fix #27) ===
+
+def test_validate_entry_negative_price():
+    """Negative price should be rejected."""
+    ok, msg = validate_entry(-0.10, 100_000)
+    assert not ok
+    assert "Invalid" in msg
+
+
+def test_validate_entry_negative_volume():
+    """Negative volume should be rejected."""
+    ok, msg = validate_entry(0.20, -1000)
+    assert not ok
+    assert "Invalid" in msg
+
+
+def test_reward_risk_ratio_negative_price():
+    """Negative entry price should be rejected."""
+    ok, msg = check_reward_risk_ratio(-0.10)
+    assert not ok
+    assert "Invalid" in msg
+
+
+def test_reward_risk_ratio_entry_at_payout():
+    """Entry price at max payout should be rejected (no upside)."""
+    ok, msg = check_reward_risk_ratio(1.00, max_payout=1.00)
+    assert not ok
+    assert "max payout" in msg.lower() or "entry price" in msg.lower()
+
+
+def test_reward_risk_ratio_entry_above_payout():
+    """Entry price above max payout should be rejected."""
+    ok, msg = check_reward_risk_ratio(1.50, max_payout=1.00)
+    assert not ok
+
+
+def test_sell_list_cache_invalidation(tmp_path):
+    """Sell list should be re-read when file changes."""
+    import bot.guardrails as g
+    import time
+    sell_file = tmp_path / "sell_list.json"
+
+    # Temporarily override STATE_DIR
+    original_state_dir = config.STATE_DIR
+    config.STATE_DIR = str(tmp_path)
+    # Reset cache
+    g._load_sell_list._cache = (0, [])
+
+    try:
+        # No file → empty list
+        result = g._load_sell_list()
+        assert result == []
+
+        # Create file
+        sell_file.write_text('["Bitcoin"]')
+        result = g._load_sell_list()
+        assert result == ["bitcoin"]  # lowercased
+
+        # Ensure mtime changes (some filesystems have 1s resolution)
+        time.sleep(0.05)
+        sell_file.write_text('["Ethereum", "Solana"]')
+        # Force mtime change
+        os.utime(str(sell_file), (time.time() + 1, time.time() + 1))
+        result = g._load_sell_list()
+        assert result == ["ethereum", "solana"]
+    finally:
+        config.STATE_DIR = original_state_dir
+        g._load_sell_list._cache = (0, [])
+
+
+def test_sell_list_invalid_json(tmp_path):
+    """Invalid JSON in sell list should not crash."""
+    import bot.guardrails as g
+
+    original_state_dir = config.STATE_DIR
+    config.STATE_DIR = str(tmp_path)
+    g._load_sell_list._cache = (0, [])
+
+    try:
+        sell_file = tmp_path / "sell_list.json"
+        sell_file.write_text("{not valid json")
+        result = g._load_sell_list()
+        assert result == []
+    finally:
+        config.STATE_DIR = original_state_dir
+        g._load_sell_list._cache = (0, [])
+
+
+def test_sell_list_non_list_json(tmp_path):
+    """Non-list JSON in sell list should return empty."""
+    import bot.guardrails as g
+
+    original_state_dir = config.STATE_DIR
+    config.STATE_DIR = str(tmp_path)
+    g._load_sell_list._cache = (0, [])
+
+    try:
+        sell_file = tmp_path / "sell_list.json"
+        sell_file.write_text('{"key": "value"}')
+        result = g._load_sell_list()
+        assert result == []
+    finally:
+        config.STATE_DIR = original_state_dir
+        g._load_sell_list._cache = (0, [])
