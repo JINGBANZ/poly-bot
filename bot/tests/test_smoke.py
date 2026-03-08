@@ -380,6 +380,39 @@ def test_gov_monitor_no_false_matches():
     assert len(matches) == 0
 
 
+def test_scan_parser_rejects_malformed_lines():
+    """Issue #25: LLM scan parser must only match lines with numeric market index prefix.
+    
+    Summary lines, bullet points, and commentary containing TRADE/LEAN/RESEARCH
+    keywords should be ignored — only lines like '6. TRADE — reason' should match.
+    """
+    import re
+
+    # This is the regex used in bot/main.py for scan line parsing
+    def parse_line(line):
+        m = re.match(
+            r'^\s*\**\s*(\d+)\.?\s*\**\s*(TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*(.*)',
+            line, re.IGNORECASE
+        )
+        return m
+
+    # Valid lines that SHOULD match
+    assert parse_line("6. TRADE — Buy YES on BTC market") is not None
+    assert parse_line("3. LEAN — Slight edge detected") is not None
+    assert parse_line("1. RESEARCH — Needs more data") is not None
+    assert parse_line("**6.** TRADE — reason here") is not None
+    assert parse_line("  2. TRADE: some reason") is not None
+
+    # Malformed lines that SHOULD NOT match (issue #25 cases)
+    assert parse_line("- **TRADE:** 0") is None, "Bullet summary line should not match"
+    assert parse_line("**Key note on Market 6: If BTC is currently ~$85K+...") is None
+    assert parse_line("- TRADE count: 3") is None, "Dash-prefixed summary should not match"
+    assert parse_line("Summary: 2 TRADE, 1 LEAN, 3 RESEARCH") is None
+    assert parse_line("TRADE — some action without number") is None
+    assert parse_line("In total, TRADE signals were strong") is None
+    assert parse_line("## TRADE Recommendations") is None
+
+
 def test_no_direct_market_buy_sell_outside_execution():
     """Regression: NO module should call api.market_buy/sell directly.
     All trades must go through execution.execute_buy/execute_sell.
