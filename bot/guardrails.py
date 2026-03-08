@@ -88,18 +88,24 @@ def validate_entry(price: float, volume_24h: float, skip_value_zone: bool = Fals
 def check_reward_risk_ratio(entry_price: float,
                             stop_loss_pct: float = None,
                             take_profit_pct: float = None,
-                            min_ratio: float = None) -> tuple[bool, str]:
+                            min_ratio: float = None,
+                            max_payout: float = 1.0) -> tuple[bool, str]:
     """Check if a trade has adequate reward-to-risk ratio before entry.
 
     For a binary YES token bought at `entry_price`:
-      - Reward = take_profit target price - entry_price
+      - TP target is capped at `max_payout` ($1.00 for binary tokens)
+      - Reward = min(tp_target, max_payout) - entry_price
       - Risk   = entry_price - stop_loss target price
+
+    This makes the ratio vary with entry_price (unlike a pure percentage
+    approach where entry_price cancels out).
 
     Args:
         entry_price: Price at which we'd buy the token.
         stop_loss_pct: Fractional stop-loss threshold (default from config).
         take_profit_pct: Fractional take-profit threshold (default from config).
         min_ratio: Minimum reward/risk ratio (default from config).
+        max_payout: Binary token payout ceiling (default $1.00).
 
     Returns:
         (ok, reason) — ok is True if the ratio meets the threshold.
@@ -114,12 +120,12 @@ def check_reward_risk_ratio(entry_price: float,
     if entry_price <= 0:
         return False, "Invalid entry price"
 
-    # Calculate target prices
-    tp_price = entry_price * (1 + take_profit_pct)
+    # Calculate target prices — cap TP at binary payout ceiling
+    tp_price = min(entry_price * (1 + take_profit_pct), max_payout)
     sl_price = entry_price * (1 - stop_loss_pct)
 
     # Potential reward and risk per share
-    reward = tp_price - entry_price      # upside to take-profit
+    reward = tp_price - entry_price      # upside to take-profit (capped)
     risk = entry_price - sl_price        # downside to stop-loss
 
     if risk <= 0:

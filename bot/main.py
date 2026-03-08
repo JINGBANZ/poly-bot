@@ -243,7 +243,8 @@ def _process_trade_request(req: dict, mark_processed):
     # Execute through the standard pipeline (includes 85¢ ceiling)
     result = execute_buy(token_id, buy_amount, market.get("question", slug),
                         reason=req.get("reason", "QUEUE_REQUEST"),
-                        thesis=req["thesis"], entry_price=ask_price)
+                        thesis=req["thesis"], entry_price=ask_price,
+                        end_date=market.get("end_date", ""))
 
     if result.get("success"):
         mark_processed(req["id"], "filled", f"Bought @ {ask_price:.2f}")
@@ -527,7 +528,8 @@ def run_cycle(dry_run=False) -> dict:
                     buy_amount = min(ws["max_usd"], usdc_balance - config.BALANCE_FLOOR_USD)
                     if buy_amount >= 0.50:
                         result = execute_buy(ws["token_id"], buy_amount, ws["title"],
-                                            reason="WHALE_FOLLOW", entry_price=ws["entry_price"])
+                                            reason="WHALE_FOLLOW", entry_price=ws["entry_price"],
+                                            end_date=ws.get("end_date", ""))
                     else:
                         log(f"  🐋 Whale follow skipped: insufficient balance (${usdc_balance:.2f})")
                 else:
@@ -850,7 +852,8 @@ def run_cycle(dry_run=False) -> dict:
 
                             if not dry_run:
                                 result = execute_buy(token_id, buy_amount, market.get('question', ''),
-                                                    reason="LLM_TRADE", thesis=thesis, entry_price=ask_price)
+                                                    reason="LLM_TRADE", thesis=thesis, entry_price=ask_price,
+                                                    end_date=market.get("end_date", ""))
                             else:
                                 log(f"  [DRY-RUN] Would buy ${buy_amount:.2f} of {market.get('question')[:50]}")
 
@@ -949,7 +952,8 @@ def run_cycle(dry_run=False) -> dict:
                                 continue
 
                             result = execute_buy(token_id, buy_amount, m.get('question', ''),
-                                                reason="DEEP_VALUE_TRADE", thesis=thesis, entry_price=ask_price)
+                                                reason="DEEP_VALUE_TRADE", thesis=thesis, entry_price=ask_price,
+                                                end_date=m.get("end_date", ""))
                         else:
                             log(f"  [DRY-RUN] Would buy deep value: {m.get('question')[:50]}")
 
