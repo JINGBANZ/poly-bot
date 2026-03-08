@@ -610,6 +610,7 @@ def execute_earnings_signal(signal: dict, dry_run: bool = False) -> dict | None:
         reason=f"EARNINGS_{verdict}",
         thesis=f"{ticker} EPS ${eps:.2f} vs threshold ${threshold:.2f}",
         entry_price=ask_price,
+        end_date=signal.get("end_date", ""),
     )
     if result.get("success"):
         return {"action": "BOUGHT", "side": side, "amount": buy_amount}

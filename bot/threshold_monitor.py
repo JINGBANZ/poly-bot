@@ -355,6 +355,7 @@ def execute_crossing(crossing: dict, dry_run: bool = False) -> bool:
         reason="THRESHOLD_CROSSING",
         thesis=f"{symbol} at ${current_price:,.2f} crossed ${threshold:,.0f} threshold",
         entry_price=ask_price,
+        end_date=crossing.get("end_date", ""),
     )
     success = result.get("success", False)
     if success:

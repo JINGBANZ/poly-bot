@@ -243,7 +243,8 @@ def _process_trade_request(req: dict, mark_processed):
     # Execute through the standard pipeline (includes 85¢ ceiling)
     result = execute_buy(token_id, buy_amount, market.get("question", slug),
                         reason=req.get("reason", "QUEUE_REQUEST"),
-                        thesis=req["thesis"], entry_price=ask_price)
+                        thesis=req["thesis"], entry_price=ask_price,
+                        end_date=market.get("end_date", ""))
 
     if result.get("success"):
         mark_processed(req["id"], "filled", f"Bought @ {ask_price:.2f}")
@@ -527,7 +528,8 @@ def run_cycle(dry_run=False) -> dict:
                     buy_amount = min(ws["max_usd"], usdc_balance - config.BALANCE_FLOOR_USD)
                     if buy_amount >= 0.50:
                         result = execute_buy(ws["token_id"], buy_amount, ws["title"],
-                                            reason="WHALE_FOLLOW", entry_price=ws["entry_price"])
+                                            reason="WHALE_FOLLOW", entry_price=ws["entry_price"],
+                                            end_date=ws.get("end_date", ""))
                     else:
                         log(f"  🐋 Whale follow skipped: insufficient balance (${usdc_balance:.2f})")
                 else:
@@ -704,29 +706,31 @@ def run_cycle(dry_run=False) -> dict:
                         log(f"  🔬 {r.strip()[:150]}")
 
                     for line in analysis.split("\n"):
-                        line_upper = line.upper().replace("*", "")
-                        is_trade = "TRADE" in line_upper
-                        is_lean = "LEAN" in line_upper
-                        is_research = "RESEARCH" in line_upper and not is_trade and not is_lean
-                        if not is_trade and not is_lean and not is_research:
+                        # Require numeric market index prefix before keyword (fix #25)
+                        # Matches lines like: "6. TRADE — reason" or "**3.** LEAN: reason"
+                        # Ignores summary/commentary lines that mention keywords without a number prefix
+                        import re
+                        scan_match = re.match(
+                            r'^\s*\**\s*(\d+)\.?\s*\**\s*(TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*(.*)',
+                            line, re.IGNORECASE
+                        )
+                        if not scan_match:
                             continue
+                        idx_str = scan_match.group(1)
+                        action_keyword = scan_match.group(2).upper()
+                        is_trade = action_keyword == "TRADE"
+                        is_lean = action_keyword == "LEAN"
+                        is_research = action_keyword == "RESEARCH"
                         # Skip lines that say SKIP or NO_TRADE
+                        line_upper = line.upper()
                         if "SKIP" in line_upper or "NO_TRADE" in line_upper or "NO TRADE" in line_upper:
                             continue
                         try:
-                            # Strip markdown formatting, normalize dashes
-                            clean = line.replace("*", "").replace("–", "—").replace("-—", "—")
-                            # Split on TRADE, LEAN, or RESEARCH + any separator
-                            import re
-                            parts = re.split(r'(?:TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
-                            if len(parts) < 2:
-                                continue
-                            idx_str = parts[0].strip().strip("[]").strip(".").strip()
                             idx = int(idx_str) - 1
                             if idx < 0 or idx >= len(candidates):
                                 continue
                             market = candidates[idx]
-                            reason = parts[1].strip()
+                            reason = scan_match.group(3).strip()
 
                             # Determine side and price
                             prices = json.loads(market.get("outcomePrices", "[]"))
@@ -850,7 +854,8 @@ def run_cycle(dry_run=False) -> dict:
 
                             if not dry_run:
                                 result = execute_buy(token_id, buy_amount, market.get('question', ''),
-                                                    reason="LLM_TRADE", thesis=thesis, entry_price=ask_price)
+                                                    reason="LLM_TRADE", thesis=thesis, entry_price=ask_price,
+                                                    end_date=market.get("end_date", ""))
                             else:
                                 log(f"  [DRY-RUN] Would buy ${buy_amount:.2f} of {market.get('question')[:50]}")
 
@@ -949,7 +954,8 @@ def run_cycle(dry_run=False) -> dict:
                                 continue
 
                             result = execute_buy(token_id, buy_amount, m.get('question', ''),
-                                                reason="DEEP_VALUE_TRADE", thesis=thesis, entry_price=ask_price)
+                                                reason="DEEP_VALUE_TRADE", thesis=thesis, entry_price=ask_price,
+                                                end_date=m.get("end_date", ""))
                         else:
                             log(f"  [DRY-RUN] Would buy deep value: {m.get('question')[:50]}")
 
