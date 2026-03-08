@@ -366,7 +366,8 @@ def run_cycle(dry_run=False) -> dict:
             from .api import get_book, best_bid
             from .illiquid_tracker import (
                 record_failed_sl, should_escalate, mark_escalated,
-                is_escalated, reset_escalation, clear_position as clear_illiquid,
+                is_escalated, get_escalation_action, reset_escalation,
+                clear_position as clear_illiquid,
             )
             book = get_book(pos.token_id)
             bid_price, bid_depth = best_bid(book)
@@ -422,11 +423,17 @@ def run_cycle(dry_run=False) -> dict:
                         )
                         mark_escalated(pos.token_id, "alert_human")
                 elif is_escalated(pos.token_id):
-                    # Previously escalated but position still exists — shares
-                    # remain after a partial fill. Reset escalation so it can
-                    # be force-sold again on the next cycle (fix #21).
-                    reset_escalation(pos.token_id)
-                    log(f"  🔄 Resetting escalation for {pos.title[:40]} — {pos.size:.2f} shares still remain")
+                    # Previously escalated but position still exists.
+                    esc_action = get_escalation_action(pos.token_id)
+                    if esc_action == "force_sell":
+                        # Shares remain after a partial fill — reset so it can
+                        # be force-sold again on the next cycle (fix #21).
+                        reset_escalation(pos.token_id)
+                        log(f"  🔄 Resetting escalation for {pos.title[:40]} — {pos.size:.2f} shares still remain")
+                    else:
+                        # alert_human escalation — don't reset to avoid
+                        # re-alerting every cycle (zero-bid spam fix #21).
+                        log(f"  ⏸️ Keeping escalation for {pos.title[:40]} — human already alerted")
                 else:
                     # Not yet escalated — try limit sell + log
                     if not dry_run:
