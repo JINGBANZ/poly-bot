@@ -366,7 +366,7 @@ def run_cycle(dry_run=False) -> dict:
             from .api import get_book, best_bid
             from .illiquid_tracker import (
                 record_failed_sl, should_escalate, mark_escalated,
-                is_escalated, clear_position as clear_illiquid,
+                is_escalated, reset_escalation, clear_position as clear_illiquid,
             )
             book = get_book(pos.token_id)
             bid_price, bid_depth = best_bid(book)
@@ -395,7 +395,7 @@ def run_cycle(dry_run=False) -> dict:
                             f"🚨 ILLIQUID ESCALATION: {pos.title}\n"
                             f"Reason: {esc_reason}\n"
                             f"PnL: {pos.pnl_pct:.0%} | Bid: ${bid_price:.4f} | Depth: ${bid_depth:.2f}\n"
-                            f"Forcing sell at available price",
+                            f"Forcing sell of {pos.size:.2f} shares at available price",
                             severity="CRITICAL",
                         )
                         result = execute_sell(
@@ -403,7 +403,12 @@ def run_cycle(dry_run=False) -> dict:
                             reason=f"{gr.action}_FORCED",
                             price=bid_price, pnl=pos.pnl,
                         )
-                        mark_escalated(pos.token_id, "force_sell")
+                        # Only mark escalated on success — if sell failed or
+                        # partially filled, allow retry on next cycle (fix #21)
+                        if result.get("success"):
+                            mark_escalated(pos.token_id, "force_sell")
+                        else:
+                            log(f"  ⚠️ Force sell failed for {pos.title[:40]}, will retry next cycle")
                     else:
                         # Truly zero liquidity — alert human
                         log(f"  🚨 ESCALATION: alerting human for {pos.title[:40]} — {esc_reason}")
@@ -416,6 +421,12 @@ def run_cycle(dry_run=False) -> dict:
                             severity="CRITICAL",
                         )
                         mark_escalated(pos.token_id, "alert_human")
+                elif is_escalated(pos.token_id):
+                    # Previously escalated but position still exists — shares
+                    # remain after a partial fill. Reset escalation so it can
+                    # be force-sold again on the next cycle (fix #21).
+                    reset_escalation(pos.token_id)
+                    log(f"  🔄 Resetting escalation for {pos.title[:40]} — {pos.size:.2f} shares still remain")
                 else:
                     # Not yet escalated — try limit sell + log
                     if not dry_run:
