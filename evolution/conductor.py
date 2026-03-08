@@ -42,6 +42,7 @@ PROMPTS_DIR = REPO_ROOT / "evolution" / "prompts"
 MONITOR_SECONDS = 1800         # 30 min monitoring window
 MAX_REVISIONS = 3              # Max revision attempts before giving up
 MAX_RETRIES_PER_ISSUE = 2      # Max times to retry an issue after diagnosis
+PHASE_STALENESS_SECONDS = 3600  # 1 hour — if a phase hasn't progressed, it's stale
 
 # Subagent timeouts per phase (seconds)
 PHASE_TIMEOUTS = {
@@ -166,6 +167,89 @@ def _phase_timed_out(state: dict) -> bool:
     phase = state.get("phase", "IDLE")
     timeout = PHASE_TIMEOUTS.get(phase, 1800)
     return (_now() - started) > timeout
+
+
+def _validate_state(state: dict) -> dict | None:
+    """Validate state against external reality. Returns reset result if invalid, None if OK.
+
+    This runs at the START of every conductor cycle to self-correct inconsistencies.
+    The conductor should never get stuck — if reality doesn't match state, reset to IDLE.
+    """
+    phase = state.get("phase", "IDLE")
+    if phase == "IDLE":
+        return None  # Nothing to validate
+
+    issue_number = state.get("issue_number")
+    pr_number = state.get("pr_number")
+    branch = state.get("branch")
+
+    # 1. Validate issue exists on GitHub
+    if issue_number:
+        try:
+            issue = github_client.get_issue(issue_number)
+            if issue.get("state") == "closed" and phase not in ("MONITORING",):
+                _log(f"STATE CORRECTION: Issue #{issue_number} is closed but phase is {phase}. Resetting to IDLE.")
+                _reset_state(state)
+                return {"action": "self_corrected", "reason": f"Issue #{issue_number} is closed, phase was {phase}"}
+        except Exception:
+            _log(f"STATE CORRECTION: Issue #{issue_number} does not exist (404). Resetting to IDLE.")
+            _reset_state(state)
+            return {"action": "self_corrected", "reason": f"Issue #{issue_number} does not exist on GitHub"}
+
+    # 2. Validate PR exists (if we expect one)
+    if pr_number and phase in ("REVIEWING", "REVISING", "DEPLOYING"):
+        try:
+            pr = github_client.get_pr(pr_number)
+            if pr.get("state") == "closed" and not pr.get("merged_at"):
+                _log(f"STATE CORRECTION: PR #{pr_number} was closed (not merged) but phase is {phase}. Resetting.")
+                _reset_state(state)
+                return {"action": "self_corrected", "reason": f"PR #{pr_number} closed without merge, phase was {phase}"}
+        except Exception:
+            _log(f"STATE CORRECTION: PR #{pr_number} does not exist. Resetting to IDLE.")
+            _reset_state(state)
+            return {"action": "self_corrected", "reason": f"PR #{pr_number} does not exist on GitHub"}
+
+    # 3. Staleness detection — phase hasn't progressed in too long
+    phase_started = state.get("phase_started_ts", 0)
+    subagent_started = state.get("subagent_started_ts", 0)
+    if phase_started > 0:
+        phase_age = _now() - phase_started
+        if phase_age > PHASE_STALENESS_SECONDS:
+            # Phase has been stuck for over 1 hour
+            # Check if subagent is running (started_ts > 0 means one was dispatched)
+            if subagent_started == 0:
+                # No subagent was ever dispatched — truly stuck
+                _log(f"STATE CORRECTION: Phase {phase} stale for {int(phase_age)}s with no active subagent. Resetting.")
+                _reset_state(state)
+                return {"action": "self_corrected", "reason": f"Phase {phase} stuck for {int(phase_age)}s with no subagent"}
+
+    # 4. Validate issue_number is set for non-IDLE/non-DISCOVERING phases
+    if phase in ("WORKING", "REVIEWING", "REVISING", "DEPLOYING", "MONITORING", "DIAGNOSING"):
+        if not issue_number:
+            _log(f"STATE CORRECTION: Phase {phase} but no issue_number. Resetting to IDLE.")
+            _reset_state(state)
+            return {"action": "self_corrected", "reason": f"Phase {phase} with no issue_number"}
+
+    return None  # State is valid
+
+
+def _reset_state(state: dict):
+    """Reset state to IDLE, clearing all phase-specific fields."""
+    state["phase"] = "IDLE"
+    state["issue_number"] = None
+    state["pr_number"] = None
+    state["branch"] = None
+    state["deploy_ts"] = 0
+    state["revision_count"] = 0
+    state["last_commit_sha"] = None
+    state["error"] = None
+    state["phase_started_ts"] = 0
+    state["retry_count"] = 0
+    state["diagnosis"] = None
+    state["subagent_session_key"] = None
+    state["subagent_started_ts"] = 0
+    state["phase_context"] = {}
+    _save_state(state)
 
 
 def _transition_to_diagnosing(state: dict, failed_phase: str):
@@ -1039,12 +1123,22 @@ def _handle_discovering_result(state: dict, result: dict) -> dict:
 
         _log(f"DISCOVERING found issue #{issue_number}: {issue_title}")
 
-        # Fetch the full issue from GitHub for the body
+        # Validate issue actually exists on GitHub (prevent phantom issues)
         try:
             gh_issue = github_client.get_issue(issue_number)
+            if gh_issue.get("state") == "closed":
+                _log(f"DISCOVERING returned closed issue #{issue_number}. Ignoring.")
+                state["phase"] = "IDLE"
+                _save_state(state)
+                return {"action": "skip", "reason": f"Discovery returned closed issue #{issue_number}"}
             issue_body = gh_issue.get("body", "")
+            # Use GitHub's authoritative title, not the subagent's
+            issue_title = gh_issue.get("title", issue_title)
         except Exception:
-            issue_body = ""
+            _log(f"DISCOVERING returned non-existent issue #{issue_number}. Ignoring.")
+            state["phase"] = "IDLE"
+            _save_state(state)
+            return {"action": "skip", "reason": f"Issue #{issue_number} does not exist on GitHub (phantom issue)"}
 
         branch = f"improve/{issue_number}"
         state["issue_number"] = issue_number
@@ -1145,6 +1239,17 @@ def run() -> dict:
     state = _load_state()
     phase = state.get("phase", "IDLE")
     _log(f"Current phase: {phase}")
+
+    # Self-correction: validate state against reality before doing anything
+    correction = _validate_state(state)
+    if correction is not None:
+        correction["phase"] = "IDLE"
+        correction["timestamp"] = datetime.now(timezone.utc).isoformat()
+        _log(f"State self-corrected: {correction['reason']}")
+        return correction
+
+    # Re-read phase after potential correction
+    phase = state.get("phase", "IDLE")
 
     # Inline phases — handle directly
     if phase in INLINE_HANDLERS:
