@@ -232,7 +232,8 @@ def test_idle_spawns_discovering_when_no_fast_work(mock_fast, mock_gc):
     # Mock the prompt loading
     with patch("evolution.conductor._load_prompt", return_value="Discovery prompt {next_audit_module}"):
         with patch("evolution.conductor.get_next_audit_module", return_value="bot/main.py"):
-            result = _handle_idle({"phase": "IDLE"})
+            with patch("evolution.conductor._save_state"):
+                result = _handle_idle({"phase": "IDLE"})
 
     assert result["action"] == "spawn_subagent"
     assert result["phase"] == "DISCOVERING"
@@ -251,7 +252,8 @@ def test_idle_goes_to_working_when_fast_finds_issue(mock_fast, mock_gc):
     }
 
     with patch("evolution.conductor._load_prompt", return_value="Worker prompt"):
-        result = _handle_idle({"phase": "IDLE"})
+        with patch("evolution.conductor._save_state"):
+            result = _handle_idle({"phase": "IDLE"})
 
     assert result["action"] == "spawn_subagent"
     assert result["phase"] == "WORKING"
