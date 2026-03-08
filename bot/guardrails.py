@@ -1,5 +1,7 @@
 """Guardrails module — stop-loss, take-profit, and entry validation."""
 
+import json
+import os
 from datetime import datetime, timezone
 from . import config
 from .portfolio import Position
@@ -53,18 +55,51 @@ def _try_sell(pos: Position, reason: str, detail: str) -> GuardrailResult:
         f"{reason}: market_sell {pos.size:.1f} shares, ~${sell_value:.2f} ({detail})")
 
 
-def _should_actively_sell(pos: Position) -> bool:
-    """Check if this position is on the active sell list."""
-    import json, os
+def _load_sell_list() -> list[str]:
+    """Load the active sell list from disk, with caching.
+
+    Caches the result and file mtime so we only re-read when the file
+    actually changes. Returns an empty list on missing file or parse error.
+    """
     sell_file = os.path.join(config.STATE_DIR, "sell_list.json")
-    if not os.path.exists(sell_file):
-        return False
+
+    try:
+        mtime = os.path.getmtime(sell_file)
+    except OSError:
+        # File doesn't exist or isn't accessible
+        _load_sell_list._cache = (0, [])
+        return []
+
+    # Return cached result if file hasn't changed
+    cached_mtime, cached_list = getattr(_load_sell_list, "_cache", (0, []))
+    if mtime == cached_mtime:
+        return cached_list
+
     try:
         with open(sell_file) as f:
             sell_list = json.load(f)
-        return any(item.lower() in pos.title.lower() for item in sell_list)
-    except:
+        if not isinstance(sell_list, list):
+            log(f"  ⚠️ sell_list.json: expected list, got {type(sell_list).__name__}")
+            sell_list = []
+        # Pre-lowercase for faster matching
+        result = [str(item).lower() for item in sell_list]
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"  ⚠️ Failed to load sell_list.json: {e}")
+        result = []
+
+    _load_sell_list._cache = (mtime, result)
+    return result
+
+_load_sell_list._cache = (0, [])
+
+
+def _should_actively_sell(pos: Position) -> bool:
+    """Check if this position is on the active sell list."""
+    sell_list = _load_sell_list()
+    if not sell_list:
         return False
+    title_lower = pos.title.lower()
+    return any(item in title_lower for item in sell_list)
 
 
 def validate_entry(price: float, volume_24h: float, skip_value_zone: bool = False) -> tuple[bool, str]:
@@ -75,6 +110,8 @@ def validate_entry(price: float, volume_24h: float, skip_value_zone: bool = Fals
             modules with confirmed information edge (threshold crossings,
             earnings beats, gov announcements, whale following).
     """
+    if price < 0 or volume_24h < 0:
+        return False, f"Invalid input: price={price}, volume={volume_24h}"
     if volume_24h < config.MIN_VOLUME_24H:
         return False, f"Volume ${volume_24h:,.0f} < ${config.MIN_VOLUME_24H:,.0f} minimum"
     if not skip_value_zone:
@@ -117,8 +154,10 @@ def check_reward_risk_ratio(entry_price: float,
     if min_ratio is None:
         min_ratio = config.MIN_REWARD_RISK_RATIO
 
-    if entry_price <= 0:
-        return False, "Invalid entry price"
+    if entry_price <= 0 or entry_price >= max_payout:
+        if entry_price <= 0:
+            return False, "Invalid entry price"
+        return False, f"Entry price {entry_price:.2f} >= max payout {max_payout:.2f}"
 
     # Calculate target prices — cap TP at binary payout ceiling
     tp_price = min(entry_price * (1 + take_profit_pct), max_payout)
