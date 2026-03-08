@@ -508,6 +508,25 @@ def _handle_subagent_phase(state: dict) -> dict:
             _log(f"{phase} subagent timed out after {elapsed}s")
             state["subagent_session_key"] = None
             state["subagent_started_ts"] = 0
+
+            # WORKING timeout fallback: check if branch has commits
+            # (worker may have done the work but failed to write phase_result.json)
+            if phase == "WORKING":
+                branch = state.get("branch")
+                if branch and github_client.branch_exists(branch):
+                    commits = github_client.get_branch_commits(branch, since_sha=None)
+                    if commits:
+                        _log(f"WORKING timed out but branch '{branch}' has {len(commits)} commits — treating as success")
+                        state["last_commit_sha"] = commits[0]["sha"]
+                        # Synthesize a result and handle it normally
+                        synthetic_result = {
+                            "phase": "WORKING",
+                            "status": "complete",
+                            "details": {"summary": "Worker timed out but commits found on branch (fallback)"},
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        return _handle_phase_result(state, phase, synthetic_result)
+
             _transition_to_diagnosing(state, phase)
 
             # Spawn diagnosing subagent immediately
