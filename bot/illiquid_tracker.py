@@ -122,6 +122,15 @@ def is_escalated(token_id: str) -> bool:
     return entry.get("escalated", False) if entry else False
 
 
+def get_escalation_action(token_id: str) -> str:
+    """Return the escalation action type (e.g. 'force_sell', 'alert_human'), or '' if not escalated."""
+    state = _load_state()
+    entry = state.get(token_id)
+    if entry and entry.get("escalated"):
+        return entry.get("escalation_action", "")
+    return ""
+
+
 def reset_escalation(token_id: str):
     """Reset escalation flag so a position can be re-escalated.
     
