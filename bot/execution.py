@@ -208,14 +208,19 @@ def order_succeeded(result) -> bool:
 
 
 def execute_buy(token_id: str, amount_usd: float, market_name: str,
-                reason: str, thesis: str = "", entry_price: float = 0) -> dict:
+                reason: str, thesis: str = "", entry_price: float = 0,
+                end_date: str = "") -> dict:
     """Complete buy pipeline: balance → buy → log → alert. Returns result dict.
     
     Caller is responsible for orderbook checks before calling this.
-    This handles: market_buy → success check → log_trade → write_alert.
+    This handles: risk/reward check → market_buy → success check → log_trade → write_alert.
+    
+    Args:
+        end_date: Optional ISO date string for market expiry (used for duration check).
     """
     from .api import market_buy
     from .alerts import write_alert
+    from .guardrails import check_reward_risk_ratio, check_market_duration
 
     # LAST-RESORT STALE PRICE GUARD: Never buy above 85¢ unless explicitly
     # flagged. If you're paying 85¢+ the expected edge is <15¢ — not worth
@@ -223,6 +228,20 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
     if entry_price > 0.85:
         log(f"  🛑 EXECUTION GUARD: entry_price {entry_price:.2f} > 85¢ ceiling. Refusing buy.")
         return {"success": False, "error": f"Price {entry_price:.2f} exceeds 85¢ safety ceiling"}
+
+    # Risk/reward ratio check (fix #23): ensure potential reward justifies the risk
+    if entry_price > 0:
+        rr_ok, rr_msg = check_reward_risk_ratio(entry_price)
+        if not rr_ok:
+            log(f"  🛑 EXECUTION GUARD: {market_name[:50]} — {rr_msg}")
+            return {"success": False, "error": f"Risk/reward filter: {rr_msg}"}
+
+    # Market duration check (fix #23): reject markets expiring too soon
+    if end_date:
+        dur_ok, dur_msg = check_market_duration(end_date)
+        if not dur_ok:
+            log(f"  🛑 EXECUTION GUARD: {market_name[:50]} — {dur_msg}")
+            return {"success": False, "error": f"Duration filter: {dur_msg}"}
 
     if amount_usd <= 0:
         log(f"  🛑 EXECUTION GUARD: amount_usd={amount_usd} is non-positive. Refusing buy.")

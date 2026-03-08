@@ -30,6 +30,10 @@ MAX_POSITION_USD = 2.00       # Max $2 per new position
 VALUE_ZONE_MIN = 0.10         # Only enter above 10¢
 VALUE_ZONE_MAX = 0.25         # Only enter below 25¢ (Phase 63: backtest showed 24.2% YES resolution rate across 1498 markets; positive EV only below 25¢)
 
+# Risk/Reward guardrails
+MIN_REWARD_RISK_RATIO = 1.5   # Minimum reward-to-risk ratio before entry (fix #23)
+MIN_MARKET_DURATION_DAYS = 3  # Reject markets expiring within this many days (fix #23)
+
 # Orderbook / limit orders
 MAX_SPREAD_PCT = 0.10         # Reject trades with spread > 10%
 STALE_ORDER_HOURS = 24        # Cancel open orders older than this

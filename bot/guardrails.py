@@ -1,7 +1,9 @@
 """Guardrails module — stop-loss, take-profit, and entry validation."""
 
+from datetime import datetime, timezone
 from . import config
 from .portfolio import Position
+from .logger import log
 
 class GuardrailResult:
     def __init__(self, action: str, position: Position, detail: str = ""):
@@ -81,3 +83,93 @@ def validate_entry(price: float, volume_24h: float, skip_value_zone: bool = Fals
         if price > config.VALUE_ZONE_MAX:
             return False, f"Price {price:.2f} above value zone ({config.VALUE_ZONE_MAX})"
     return True, "OK"
+
+
+def check_reward_risk_ratio(entry_price: float,
+                            stop_loss_pct: float = None,
+                            take_profit_pct: float = None,
+                            min_ratio: float = None) -> tuple[bool, str]:
+    """Check if a trade has adequate reward-to-risk ratio before entry.
+
+    For a binary YES token bought at `entry_price`:
+      - Reward = take_profit target price - entry_price
+      - Risk   = entry_price - stop_loss target price
+
+    Args:
+        entry_price: Price at which we'd buy the token.
+        stop_loss_pct: Fractional stop-loss threshold (default from config).
+        take_profit_pct: Fractional take-profit threshold (default from config).
+        min_ratio: Minimum reward/risk ratio (default from config).
+
+    Returns:
+        (ok, reason) — ok is True if the ratio meets the threshold.
+    """
+    if stop_loss_pct is None:
+        stop_loss_pct = config.STOP_LOSS_PCT
+    if take_profit_pct is None:
+        take_profit_pct = config.TAKE_PROFIT_PCT
+    if min_ratio is None:
+        min_ratio = config.MIN_REWARD_RISK_RATIO
+
+    if entry_price <= 0:
+        return False, "Invalid entry price"
+
+    # Calculate target prices
+    tp_price = entry_price * (1 + take_profit_pct)
+    sl_price = entry_price * (1 - stop_loss_pct)
+
+    # Potential reward and risk per share
+    reward = tp_price - entry_price      # upside to take-profit
+    risk = entry_price - sl_price        # downside to stop-loss
+
+    if risk <= 0:
+        # Stop-loss at or below zero — infinite theoretical ratio, allow it
+        return True, f"R:R infinite (SL at ${sl_price:.2f})"
+
+    ratio = reward / risk
+
+    if ratio < min_ratio:
+        msg = (f"Risk/reward {ratio:.2f}:1 < {min_ratio:.1f}:1 minimum "
+               f"(entry={entry_price:.2f}, TP@{tp_price:.2f}=+${reward:.3f}, "
+               f"SL@{sl_price:.2f}=-${risk:.3f})")
+        log(f"  🚫 REJECTED: {msg}")
+        return False, msg
+
+    return True, f"R:R {ratio:.2f}:1 OK"
+
+
+def check_market_duration(end_date_str: str,
+                          min_days: int = None) -> tuple[bool, str]:
+    """Check if a market has enough time before expiry.
+
+    Short-duration markets don't give enough time for edge to materialize.
+
+    Args:
+        end_date_str: ISO-format end/expiry date string (from Gamma API).
+        min_days: Minimum days until expiry (default from config).
+
+    Returns:
+        (ok, reason) — ok is True if the market meets the duration threshold.
+    """
+    if min_days is None:
+        min_days = config.MIN_MARKET_DURATION_DAYS
+
+    if not end_date_str:
+        # No end date available — allow the trade (many markets don't have one)
+        return True, "No end date specified"
+
+    try:
+        end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        days_until = (end_dt - now).total_seconds() / 86400
+
+        if days_until < min_days:
+            msg = (f"Market expires in {days_until:.1f} days "
+                   f"(< {min_days} day minimum)")
+            log(f"  🚫 REJECTED: {msg}")
+            return False, msg
+
+        return True, f"{days_until:.0f} days until expiry"
+    except (ValueError, TypeError) as e:
+        # Can't parse date — allow the trade rather than block on bad data
+        return True, f"Could not parse end date: {e}"
