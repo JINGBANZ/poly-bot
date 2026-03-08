@@ -706,29 +706,31 @@ def run_cycle(dry_run=False) -> dict:
                         log(f"  🔬 {r.strip()[:150]}")
 
                     for line in analysis.split("\n"):
-                        line_upper = line.upper().replace("*", "")
-                        is_trade = "TRADE" in line_upper
-                        is_lean = "LEAN" in line_upper
-                        is_research = "RESEARCH" in line_upper and not is_trade and not is_lean
-                        if not is_trade and not is_lean and not is_research:
+                        # Require numeric market index prefix before keyword (fix #25)
+                        # Matches lines like: "6. TRADE — reason" or "**3.** LEAN: reason"
+                        # Ignores summary/commentary lines that mention keywords without a number prefix
+                        import re
+                        scan_match = re.match(
+                            r'^\s*\**\s*(\d+)\.?\s*\**\s*(TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*(.*)',
+                            line, re.IGNORECASE
+                        )
+                        if not scan_match:
                             continue
+                        idx_str = scan_match.group(1)
+                        action_keyword = scan_match.group(2).upper()
+                        is_trade = action_keyword == "TRADE"
+                        is_lean = action_keyword == "LEAN"
+                        is_research = action_keyword == "RESEARCH"
                         # Skip lines that say SKIP or NO_TRADE
+                        line_upper = line.upper()
                         if "SKIP" in line_upper or "NO_TRADE" in line_upper or "NO TRADE" in line_upper:
                             continue
                         try:
-                            # Strip markdown formatting, normalize dashes
-                            clean = line.replace("*", "").replace("–", "—").replace("-—", "—")
-                            # Split on TRADE, LEAN, or RESEARCH + any separator
-                            import re
-                            parts = re.split(r'(?:TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*', clean, maxsplit=1, flags=re.IGNORECASE)
-                            if len(parts) < 2:
-                                continue
-                            idx_str = parts[0].strip().strip("[]").strip(".").strip()
                             idx = int(idx_str) - 1
                             if idx < 0 or idx >= len(candidates):
                                 continue
                             market = candidates[idx]
-                            reason = parts[1].strip()
+                            reason = scan_match.group(3).strip()
 
                             # Determine side and price
                             prices = json.loads(market.get("outcomePrices", "[]"))
