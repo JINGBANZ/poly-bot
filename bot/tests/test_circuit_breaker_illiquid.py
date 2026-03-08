@@ -83,11 +83,13 @@ class TestCircuitBreakerIlliquidTracking:
         """should_escalate must be checked even when dry_run=True."""
         from bot.illiquid_tracker import (
             record_failed_sl, should_escalate, MAX_FAILED_ATTEMPTS,
+            DEEP_LOSS_MULTIPLIER,
         )
+        from bot.config import STOP_LOSS_PCT
 
-        # Use -0.60 to stay below deep_loss threshold (75%) so we test
-        # the max_attempts path specifically (fix #21 changed DEEP_LOSS_MULTIPLIER)
-        pos = _make_position(pnl_pct=-0.60)
+        # Use a loss below deep_loss threshold so we test the max_attempts path
+        pnl_pct = -(STOP_LOSS_PCT * DEEP_LOSS_MULTIPLIER * 0.9)
+        pos = _make_position(pnl_pct=pnl_pct)
         dry_run = True
 
         # Record enough failures to trigger escalation
@@ -170,12 +172,13 @@ class TestCircuitBreakerIlliquidTracking:
         failed SL attempts toward escalation."""
         from bot.illiquid_tracker import (
             record_failed_sl, should_escalate, get_status,
-            MAX_FAILED_ATTEMPTS,
+            MAX_FAILED_ATTEMPTS, DEEP_LOSS_MULTIPLIER,
         )
+        from bot.config import STOP_LOSS_PCT
 
-        # Use -0.60 to stay below deep_loss threshold (75%) so we test
-        # the attempt-accumulation path (fix #21 changed DEEP_LOSS_MULTIPLIER)
-        pos = _make_position(pnl_pct=-0.60)
+        # Use a loss below deep_loss threshold so we test the attempt-accumulation path
+        pnl_pct = -(STOP_LOSS_PCT * DEEP_LOSS_MULTIPLIER * 0.9)
+        pos = _make_position(pnl_pct=pnl_pct)
 
         # Simulate multiple 5-minute cycles, all in circuit breaker mode
         for i in range(MAX_FAILED_ATTEMPTS - 1):

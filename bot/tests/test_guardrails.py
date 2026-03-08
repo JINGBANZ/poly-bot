@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from datetime import datetime, timezone, timedelta
-from bot.guardrails import validate_entry, check_position, check_reward_risk_ratio, check_market_duration
+from bot.guardrails import validate_entry, check_position, check_reward_risk_ratio, check_market_duration, check_minimum_edge
 from bot.portfolio import Position
 from bot import config
 
@@ -80,10 +80,10 @@ def test_check_position_hold():
 
 
 def test_check_position_stop_loss():
-    """Down 55% should trigger stop-loss."""
+    """Down 40% should trigger stop-loss (SL at 35%)."""
     p = Position({"title": "Loser", "size": "10", "avgPrice": "0.40",
-                  "curPrice": "0.18", "asset": "0xtoken"})
-    assert p.pnl_pct <= -0.50
+                  "curPrice": "0.24", "asset": "0xtoken"})
+    assert p.pnl_pct <= -config.STOP_LOSS_PCT
     result = check_position(p)
     assert result.action == "SELL_SL"
 
@@ -114,10 +114,10 @@ def test_check_position_skip_no_token():
 # === check_reward_risk_ratio (fix #23) ===
 
 def test_reward_risk_ratio_good():
-    """With SL=50% and TP=200%, a low entry price has great R:R (binary-aware)."""
-    ok, msg = check_reward_risk_ratio(0.15, stop_loss_pct=0.50, take_profit_pct=2.00)
+    """With SL=35% and TP=200%, a low entry price has great R:R (binary-aware)."""
+    ok, msg = check_reward_risk_ratio(0.15, stop_loss_pct=0.35, take_profit_pct=2.00)
     assert ok
-    # tp = min(0.15*3.0, 1.0) = 0.45, reward = 0.30, risk = 0.075 → ratio = 4.0
+    # tp = min(0.15*3.0, 1.0) = 0.45, reward = 0.30, risk = 0.0525 → ratio = 5.7
     assert "OK" in msg
 
 
@@ -153,9 +153,9 @@ def test_reward_risk_ratio_varies_with_entry():
 
 def test_reward_risk_ratio_exact_threshold():
     """Ratio exactly at minimum should pass."""
-    # entry=0.50, SL=50%, risk=0.25
-    # Need reward=0.375 for ratio=1.5, tp_target=0.875, tp_pct=(0.875/0.50-1)=0.75
-    ok, msg = check_reward_risk_ratio(0.50, stop_loss_pct=0.50, take_profit_pct=0.75, min_ratio=1.5)
+    # entry=0.50, SL=35%, risk=0.175
+    # Need reward=0.35 for ratio=2.0, tp_target=0.85, tp_pct=(0.85/0.50-1)=0.70
+    ok, msg = check_reward_risk_ratio(0.50, stop_loss_pct=0.35, take_profit_pct=0.70, min_ratio=2.0)
     assert ok
 
 
@@ -174,17 +174,17 @@ def test_reward_risk_ratio_zero_price():
 
 
 def test_reward_risk_ratio_default_config():
-    """With default config values (SL=50%, TP=200%), a typical value-zone entry should pass."""
+    """With default config values (SL=35%, TP=200%), a typical value-zone entry should pass."""
     # entry=0.20, tp = min(0.60, 1.0) = 0.60, reward=0.40
-    # SL=50% → target=0.10, risk=0.10
-    # ratio = 4.0 ≥ 1.5 → pass
+    # SL=35% → target=0.13, risk=0.07
+    # ratio = 5.7 ≥ 2.0 → pass
     ok, msg = check_reward_risk_ratio(0.20)
     assert ok
 
 
 def test_reward_risk_ratio_uses_config_min():
     """Verify the function uses config.MIN_REWARD_RISK_RATIO by default."""
-    assert config.MIN_REWARD_RISK_RATIO == 1.5
+    assert config.MIN_REWARD_RISK_RATIO == 2.0
 
 
 # === check_market_duration (fix #23) ===
@@ -335,3 +335,99 @@ def test_sell_list_non_list_json(tmp_path):
     finally:
         config.STATE_DIR = original_state_dir
         g._load_sell_list._cache = (0, [])
+
+
+# === check_minimum_edge (fix #29) ===
+
+def test_minimum_edge_low_price_passes():
+    """Low entry price (value zone) has plenty of edge relative to SL."""
+    ok, msg = check_minimum_edge(0.15)
+    assert ok
+    # edge = 1.0 - 0.15 = 0.85
+    # sl_distance = 0.15 * 0.35 = 0.0525
+    # slippage = 0.15 * 0.02 = 0.003
+    # risk_cost = 0.0555
+    # ratio = 0.85 / 0.0555 ≈ 15.3 >> 2.0
+    assert "OK" in msg
+
+
+def test_minimum_edge_high_price_fails():
+    """High entry price has insufficient edge relative to SL."""
+    ok, msg = check_minimum_edge(0.85, stop_loss_pct=0.35, min_edge_multiple=2.0)
+    assert not ok
+    # edge = 1.0 - 0.85 = 0.15
+    # sl_distance = 0.85 * 0.35 = 0.2975
+    # slippage = 0.85 * 0.02 = 0.017
+    # risk_cost = 0.3145
+    # ratio = 0.15 / 0.3145 ≈ 0.48 < 2.0
+    assert "Insufficient edge" in msg
+
+
+def test_minimum_edge_mid_price():
+    """Mid-range price should pass with default params."""
+    ok, msg = check_minimum_edge(0.25)
+    assert ok
+    # edge = 0.75, sl_dist = 0.0875, slip = 0.005, risk = 0.0925
+    # ratio = 0.75 / 0.0925 ≈ 8.1 >> 2.0
+
+
+def test_minimum_edge_invalid_price():
+    """Zero or negative price should fail."""
+    ok, msg = check_minimum_edge(0.0)
+    assert not ok
+    ok2, msg2 = check_minimum_edge(-0.10)
+    assert not ok2
+
+
+def test_minimum_edge_at_payout():
+    """Entry at max payout should fail (no edge)."""
+    ok, msg = check_minimum_edge(1.0)
+    assert not ok
+
+
+def test_minimum_edge_custom_params():
+    """Custom parameters should be respected."""
+    # With very tight SL and low edge requirement, high prices can pass
+    ok, msg = check_minimum_edge(0.80, stop_loss_pct=0.05, min_edge_multiple=1.0)
+    # edge = 0.20, sl = 0.04, slip = 0.016, risk = 0.056
+    # ratio = 0.20/0.056 ≈ 3.57 > 1.0
+    assert ok
+
+
+def test_minimum_edge_config_constant():
+    """Verify MIN_EDGE_MULTIPLE config exists."""
+    assert config.MIN_EDGE_MULTIPLE == 2.0
+
+
+# === Sell cooldown (fix #29) ===
+
+def test_sell_cooldown_prevents_double_sell():
+    """Recently sold tokens should be on cooldown."""
+    import time
+    from bot.execution import is_sell_on_cooldown, _recent_sells, _SELL_COOLDOWN_SEC
+
+    token = "test_token_cooldown_123"
+    # Not sold yet
+    _recent_sells.pop(token, None)
+    assert not is_sell_on_cooldown(token)
+
+    # Mark as sold
+    _recent_sells[token] = time.time()
+    assert is_sell_on_cooldown(token)
+
+    # Expired cooldown
+    _recent_sells[token] = time.time() - _SELL_COOLDOWN_SEC - 1
+    assert not is_sell_on_cooldown(token)
+
+    # Cleanup
+    _recent_sells.pop(token, None)
+
+
+def test_stop_loss_pct_tightened():
+    """fix #29: Stop-loss should be 35% (tightened from 50%)."""
+    assert config.STOP_LOSS_PCT == 0.35
+
+
+def test_reward_risk_ratio_raised():
+    """fix #29: Min R:R ratio should be 2.0 (raised from 1.5)."""
+    assert config.MIN_REWARD_RISK_RATIO == 2.0
