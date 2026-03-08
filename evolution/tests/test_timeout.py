@@ -133,9 +133,11 @@ class TestSubagentPhaseHandler:
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
     def test_subagent_timeout_triggers_diagnosing(self, mock_save, mock_gh, mock_read):
-        """When subagent times out (started_ts past timeout), should transition to DIAGNOSING."""
+        """When subagent times out and branch has no commits, should transition to DIAGNOSING."""
         from evolution.conductor import _handle_subagent_phase
         mock_read.return_value = None
+        # Simulate no commits on branch — fallback should not apply, goes to DIAGNOSING
+        mock_gh.branch_exists.return_value = False
         state = {
             "phase": "WORKING",
             "subagent_session_key": None,  # Key not needed for timeout detection
@@ -150,6 +152,31 @@ class TestSubagentPhaseHandler:
         assert result["action"] == "spawn_subagent"
         assert result["phase"] == "DIAGNOSING"
         assert state["phase"] == "DIAGNOSING"
+
+    @patch("evolution.conductor._read_phase_result")
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_working_timeout_with_commits_goes_to_reviewing(self, mock_save, mock_gh, mock_read):
+        """When WORKING times out but branch has commits, treat as success (go to REVIEWING)."""
+        from evolution.conductor import _handle_subagent_phase
+        mock_read.return_value = None
+        # Simulate commits found on branch — timeout fallback treats as success
+        mock_gh.branch_exists.return_value = True
+        mock_gh.get_branch_commits.return_value = [{"sha": "abc123"}]
+        mock_gh.create_pr.return_value = {"number": 10}
+        state = {
+            "phase": "WORKING",
+            "subagent_session_key": None,
+            "subagent_started_ts": time.time() - 2000,  # Past timeout
+            "issue_number": 6,
+            "pr_number": None,
+            "branch": "improve/6",
+            "diagnosis": None,
+            "phase_context": {"issue_title": "Test", "issue_body": "Body"},
+        }
+        result = _handle_subagent_phase(state)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "REVIEWING"
 
 
 class TestHandleWorkingResult:

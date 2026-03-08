@@ -19,7 +19,7 @@ STATE_FILE = os.path.join(config.STATE_DIR, "illiquid_sl.json")
 # Escalation thresholds
 MAX_FAILED_ATTEMPTS = 12          # ~1 hour at 5-min cycles
 MAX_TIME_PAST_SL_HOURS = 24.0    # Force action after 24h stuck past SL
-DEEP_LOSS_MULTIPLIER = 2.0       # If loss > 2x stop-loss, accept any price
+DEEP_LOSS_MULTIPLIER = 1.5       # If loss > 1.5x stop-loss, accept any price
 
 
 def _load_state() -> dict:
@@ -89,7 +89,7 @@ def should_escalate(token_id: str, pnl_pct: float) -> tuple[bool, str]:
     first_ts = entry.get("first_failed_ts", time.time())
     hours_stuck = (time.time() - first_ts) / 3600
 
-    # Deep loss: position is >2x past stop-loss threshold
+    # Deep loss: position is >1.5x past stop-loss threshold
     if abs(pnl_pct) >= config.STOP_LOSS_PCT * DEEP_LOSS_MULTIPLIER:
         if attempts >= 3:  # Give it a few tries first
             return True, f"deep_loss ({pnl_pct:.0%} loss, {attempts} failed attempts)"
@@ -120,6 +120,19 @@ def is_escalated(token_id: str) -> bool:
     state = _load_state()
     entry = state.get(token_id)
     return entry.get("escalated", False) if entry else False
+
+
+def reset_escalation(token_id: str):
+    """Reset escalation flag so a position can be re-escalated.
+    
+    Used when a force-sell partially fills and shares remain (fix #21).
+    Keeps the tracking history but clears the escalated flag.
+    """
+    state = _load_state()
+    if token_id in state and state[token_id].get("escalated"):
+        state[token_id]["escalated"] = False
+        state[token_id]["escalation_reset_at"] = datetime.now(timezone.utc).isoformat()
+        _save_state(state)
 
 
 def clear_position(token_id: str):
