@@ -247,7 +247,7 @@ def execute_sell(token_id: str, size: float, market_name: str,
     
     Args:
         token_id: Token to sell
-        size: Number of shares to sell (used for logging)
+        size: Number of shares to sell
         market_name: Human-readable market name
         reason: Why we're selling
         price: Current bid price (for logging)
@@ -260,11 +260,14 @@ def execute_sell(token_id: str, size: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: size={size} is non-positive. Refusing sell.")
         return {"success": False, "error": "Non-positive sell size"}
 
-    sell_amount = size * price if price > 0 else size
-    result = market_sell(token_id, sell_amount)
+    # market_sell amount = number of shares for SELL orders (NOT dollar amount).
+    # Previously this was `size * price` which sold far fewer shares than intended
+    # at low prices (fix #21).
+    sell_value_usd = size * price if price > 0 else 0
+    result = market_sell(token_id, size)
     if order_succeeded(result):
-        log(f"  ✅ Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_amount:.2f}")
-        write_alert(f"✅ SOLD: {market_name}\n{size:.1f} shares for ~${sell_amount:.2f}\nReason: {reason}")
+        log(f"  ✅ Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
+        write_alert(f"✅ SOLD: {market_name}\n{size:.1f} shares for ~${sell_value_usd:.2f}\nReason: {reason}")
         log_trade("SELL", market_name, price, size, profit=pnl, reason=reason, token_id=token_id)
         return {"success": True, "result": result}
     else:

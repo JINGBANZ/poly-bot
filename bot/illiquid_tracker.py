@@ -122,6 +122,19 @@ def is_escalated(token_id: str) -> bool:
     return entry.get("escalated", False) if entry else False
 
 
+def reset_escalation(token_id: str):
+    """Reset escalation flag so a position can be re-escalated.
+    
+    Used when a force-sell partially fills and shares remain (fix #21).
+    Keeps the tracking history but clears the escalated flag.
+    """
+    state = _load_state()
+    if token_id in state and state[token_id].get("escalated"):
+        state[token_id]["escalated"] = False
+        state[token_id]["escalation_reset_at"] = datetime.now(timezone.utc).isoformat()
+        _save_state(state)
+
+
 def clear_position(token_id: str):
     """Remove tracking for a position (e.g., after successful sell)."""
     state = _load_state()

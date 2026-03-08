@@ -182,7 +182,8 @@ def market_sell(token_id: str, amount: float) -> dict | None:
     
     Args:
         token_id: The token to sell
-        amount: Dollar amount to sell (not share count)
+        amount: Number of shares to sell (NOT dollar amount — per py_clob_client
+                MarketOrderArgs, SELL amount is shares, BUY amount is dollars)
     
     This is how the UI sells: creates a Fill-or-Kill market order
     that takes whatever liquidity is available.
