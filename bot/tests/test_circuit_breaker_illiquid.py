@@ -85,7 +85,9 @@ class TestCircuitBreakerIlliquidTracking:
             record_failed_sl, should_escalate, MAX_FAILED_ATTEMPTS,
         )
 
-        pos = _make_position(pnl_pct=-0.80)
+        # Use -0.60 to stay below deep_loss threshold (75%) so we test
+        # the max_attempts path specifically (fix #21 changed DEEP_LOSS_MULTIPLIER)
+        pos = _make_position(pnl_pct=-0.60)
         dry_run = True
 
         # Record enough failures to trigger escalation
@@ -171,7 +173,9 @@ class TestCircuitBreakerIlliquidTracking:
             MAX_FAILED_ATTEMPTS,
         )
 
-        pos = _make_position(pnl_pct=-0.75)
+        # Use -0.60 to stay below deep_loss threshold (75%) so we test
+        # the attempt-accumulation path (fix #21 changed DEEP_LOSS_MULTIPLIER)
+        pos = _make_position(pnl_pct=-0.60)
 
         # Simulate multiple 5-minute cycles, all in circuit breaker mode
         for i in range(MAX_FAILED_ATTEMPTS - 1):
