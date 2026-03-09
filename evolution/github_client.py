@@ -239,6 +239,19 @@ def get_pr_status(pr_number: int) -> dict:
 
 # --- Comments ---
 
+def get_pr_review_comments(pr_number: int) -> list:
+    """Fetch inline review comments on a PR. Returns list of dicts with path, body, user."""
+    comments = _request("get", f"/pulls/{pr_number}/comments")
+    return [
+        {
+            "path": c.get("path", ""),
+            "user": c.get("user", {}).get("login", "unknown"),
+            "body": c.get("body", ""),
+        }
+        for c in comments
+    ]
+
+
 def post_comment(issue_or_pr_number: int, body: str) -> dict:
     """Post a comment on an issue or PR."""
     return _request("post", f"/issues/{issue_or_pr_number}/comments", json={"body": body})
