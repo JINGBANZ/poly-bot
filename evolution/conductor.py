@@ -4,9 +4,17 @@ Runs every ~15 min via OpenClaw cron. Reads/writes evolution state and
 outputs JSON results for the cron wrapper to act on (spawn subagents, notify).
 
 The conductor NEVER does work itself — it only manages state transitions
-and tells the cron wrapper which subagent to spawn. Each active phase
-(WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING) has a specialized
-subagent with its own prompt template in evolution/prompts/.
+and tells the cron wrapper which subagent to spawn.
+
+Phase flow: IDLE → DISCOVERING → WORKING → REVIEWING (inline) → DEPLOYING → MONITORING
+                                                ↓ (CI/review fails)
+                                             FIXING (subagent)
+                                                ↓ (pushes fixes)
+                                             REVIEWING (inline)
+
+REVIEWING is inline (no subagent) — just checks CI + fetches review comments.
+FIXING replaces the old REVIEWING+REVISING subagents with a single subagent
+that gets full CI failure details AND inline review comments from GitHub.
 
 Subagents communicate results back via evolution/state/phase_result.json.
 
@@ -48,8 +56,7 @@ PHASE_STALENESS_SECONDS = 3600  # 1 hour — if a phase hasn't progressed, it's 
 PHASE_TIMEOUTS = {
     "DISCOVERING": 900,   # 15 min
     "WORKING": 1500,      # 25 min
-    "REVIEWING": 1800,    # 30 min
-    "REVISING": 1500,     # 25 min
+    "FIXING": 1500,       # 25 min (replaces REVIEWING+REVISING)
     "MONITORING": 2100,   # 35 min (needs full 30 min monitoring window)
     "DIAGNOSING": 600,    # 10 min
 }
@@ -197,7 +204,7 @@ def _validate_state(state: dict) -> dict | None:
             return {"action": "self_corrected", "reason": f"Issue #{issue_number} does not exist on GitHub"}
 
     # 2. Validate PR exists (if we expect one)
-    if pr_number and phase in ("REVIEWING", "REVISING", "DEPLOYING"):
+    if pr_number and phase in ("REVIEWING", "FIXING", "DEPLOYING"):
         try:
             pr = github_client.get_pr(pr_number)
             if pr.get("state") == "closed" and not pr.get("merged_at"):
@@ -224,7 +231,7 @@ def _validate_state(state: dict) -> dict | None:
                 return {"action": "self_corrected", "reason": f"Phase {phase} stuck for {int(phase_age)}s with no subagent"}
 
     # 4. Validate issue_number is set for non-IDLE/non-DISCOVERING phases
-    if phase in ("WORKING", "REVIEWING", "REVISING", "DEPLOYING", "MONITORING", "DIAGNOSING"):
+    if phase in ("WORKING", "REVIEWING", "FIXING", "DEPLOYING", "MONITORING", "DIAGNOSING"):
         if not issue_number:
             _log(f"STATE CORRECTION: Phase {phase} but no issue_number. Resetting to IDLE.")
             _reset_state(state)
@@ -360,27 +367,41 @@ def check_criteria_in_pr(pr_number: int, issue_number: int) -> dict:
 
 # --- Subagent task builders ---
 
-def _build_reviewing_task(state: dict) -> str:
-    """Build the task string for a REVIEWING subagent."""
-    template = _load_prompt("reviewing")
-    required_checks = ", ".join(github_client.REQUIRED_CHECKS)
-    return (template
-            .replace("{pr_number}", str(state.get("pr_number", "")))
-            .replace("{issue_number}", str(state.get("issue_number", "")))
-            .replace("{required_checks}", required_checks)
-            .replace("{branch}", state.get("branch", "")))
+def _build_fixing_task(state: dict) -> str:
+    """Build the task string for a FIXING subagent.
 
-
-def _build_revising_task(state: dict) -> str:
-    """Build the task string for a REVISING subagent."""
-    template = _load_prompt("revising")
+    Fetches CI failures AND inline review comments from GitHub,
+    so the fixer has full context about what needs to change.
+    """
+    template = _load_prompt("fixing")
     ctx = state.get("phase_context", {})
+    pr_number = state.get("pr_number")
+
+    # Get CI failure details from phase_context
+    ci_failures = ctx.get("ci_failures", "No CI failure details available")
+
+    # Fetch inline review comments directly from GitHub
+    review_comments = "No review comments"
+    if pr_number:
+        try:
+            comments = github_client.get_pr_review_comments(pr_number)
+            if comments:
+                formatted = []
+                for c in comments:
+                    formatted.append(
+                        f"**{c['user']}** on `{c['path']}`:\n{c['body']}"
+                    )
+                review_comments = "\n\n---\n\n".join(formatted)
+        except Exception as e:
+            _log(f"Failed to fetch review comments: {e}")
+            review_comments = f"Failed to fetch review comments: {e}"
+
     return (template
-            .replace("{pr_number}", str(state.get("pr_number", "")))
+            .replace("{pr_number}", str(pr_number or ""))
             .replace("{issue_number}", str(state.get("issue_number", "")))
             .replace("{branch}", state.get("branch", ""))
-            .replace("{ci_failures}", ctx.get("ci_failures", "No failure details available"))
-            .replace("{review_comments}", ctx.get("review_comments", "No review comments")))
+            .replace("{ci_failures}", ci_failures)
+            .replace("{review_comments}", review_comments))
 
 
 def _build_monitoring_task(state: dict) -> str:
@@ -425,8 +446,7 @@ TASK_BUILDERS = {
         state.get("branch", ""),
         diagnosis=state.get("diagnosis"),
     ),
-    "REVIEWING": _build_reviewing_task,
-    "REVISING": _build_revising_task,
+    "FIXING": _build_fixing_task,
     "MONITORING": _build_monitoring_task,
     "DIAGNOSING": _build_diagnosing_task,
 }
@@ -756,27 +776,53 @@ def _handle_working_result(state: dict, result: dict) -> dict:
     pr_number = state["pr_number"]
     _transition(state, "REVIEWING")
 
-    # Immediately spawn reviewing subagent
-    reviewing_task = _build_reviewing_task(state)
-    return {
-        "action": "spawn_subagent",
-        "phase": "REVIEWING",
-        "task": reviewing_task,
-        "timeout_seconds": PHASE_TIMEOUTS["REVIEWING"],
-        "pr_number": pr_number,
-        "issue_number": issue_number,
-        "reason": f"PR #{pr_number} opened, starting review",
-    }
+    # REVIEWING is now inline — check CI immediately
+    return _check_ci_inline(state)
 
 
-def _handle_reviewing_result(state: dict, result: dict) -> dict:
-    """Handle result from REVIEWING subagent."""
-    status = result.get("status", "unknown")
-    details = result.get("details", {})
+def _check_ci_inline(state: dict) -> dict:
+    """REVIEWING — inline CI check. No subagent needed.
+
+    Checks CI status and review comments via GitHub API. If CI passes,
+    moves to DEPLOYING. If CI fails or has review comments, spawns a
+    FIXING subagent with full context.
+    """
     pr_number = state.get("pr_number")
     issue_number = state.get("issue_number")
 
-    if status == "ci_passed":
+    if not pr_number:
+        _log("REVIEWING: no PR number, resetting to IDLE")
+        state["phase"] = "IDLE"
+        _save_state(state)
+        return {"action": "error", "reason": "REVIEWING with no PR number"}
+
+    # Check CI status
+    try:
+        ci_status = github_client.get_pr_status(pr_number)
+    except Exception as e:
+        _log(f"Failed to check CI status: {e}")
+        return {"action": "skip", "reason": f"CI status check failed: {e}"}
+
+    ci_state = ci_status.get("state", "unknown")
+    _log(f"CI state for PR #{pr_number}: {ci_state}")
+
+    # CI still running — wait for next cycle
+    if ci_state == "pending":
+        return {"action": "skip", "reason": f"CI still pending for PR #{pr_number}"}
+
+    # CI passed — check acceptance criteria and deploy
+    if ci_state == "success":
+        # Quick acceptance criteria check
+        try:
+            criteria = check_criteria_in_pr(pr_number, issue_number)
+            if not criteria.get("passed", True):
+                missing = criteria.get("missing", [])
+                _log(f"Acceptance criteria not met: {missing}")
+                # Treat as CI failure — spawn fixer
+                return _spawn_fixer(state, f"Acceptance criteria not met: {', '.join(missing)}")
+        except Exception as e:
+            _log(f"Criteria check failed (proceeding anyway): {e}")
+
         _log(f"CI passed for PR #{pr_number}, moving to DEPLOYING")
         _transition(state, "DEPLOYING")
         return {
@@ -786,96 +832,95 @@ def _handle_reviewing_result(state: dict, result: dict) -> dict:
             "reason": "CI passed and criteria met, deploying",
         }
 
-    if status == "ci_failed":
-        revision_count = state.get("revision_count", 0) + 1
-        state["revision_count"] = revision_count
-        _log(f"CI failed for PR #{pr_number}, revision {revision_count}/{MAX_REVISIONS}")
+    # CI failed — collect failure details and spawn fixer
+    checks = ci_status.get("checks", [])
+    failed = [c["name"] for c in checks if c.get("conclusion") == "failure"]
+    missing = ci_status.get("missing_required", [])
+    ci_failures = []
+    if failed:
+        ci_failures.append(f"Failed CI checks: {', '.join(failed)}")
+    if missing:
+        ci_failures.append(f"Missing required checks: {', '.join(missing)}")
 
-        if revision_count > MAX_REVISIONS:
-            return _handle_max_revisions(state)
-
-        # Store failure context for the revising subagent
-        failed_checks = details.get("failed_checks", [])
-        missing_criteria = details.get("missing_criteria", [])
-        ci_failures = []
-        if failed_checks:
-            ci_failures.append(f"Failed CI checks: {', '.join(failed_checks)}")
-        if missing_criteria:
-            ci_failures.append(f"Missing acceptance criteria: {', '.join(missing_criteria)}")
-        if details.get("ci_errors"):
-            ci_failures.append(f"CI errors: {', '.join(details['ci_errors'])}")
-
-        state["phase_context"]["ci_failures"] = "\n".join(ci_failures) or "CI failed (no details)"
-        state["phase_context"]["review_comments"] = details.get("review_comments", "No review comments")
-
-        # Post failure comment
-        try:
-            github_client.post_comment(
-                pr_number,
-                f"⚠️ CI failed (attempt {revision_count}/{MAX_REVISIONS}).\n"
-                f"{''.join(ci_failures)}\n"
-                f"Spawning revision subagent.",
-            )
-        except Exception as e:
-            _log(f"Failed to post comment: {e}")
-
-        _transition(state, "REVISING")
-
-        # Spawn revising subagent
-        revising_task = _build_revising_task(state)
-        return {
-            "action": "spawn_subagent",
-            "phase": "REVISING",
-            "task": revising_task,
-            "timeout_seconds": PHASE_TIMEOUTS["REVISING"],
-            "pr_number": pr_number,
-            "issue_number": issue_number,
-            "revision_count": revision_count,
-            "reason": f"CI failed, revision {revision_count}",
-        }
-
-    # Error or unknown status
-    _log(f"REVIEWING subagent returned status: {status}")
-    return {"action": "error", "reason": f"REVIEWING returned unexpected status: {status}"}
+    failure_summary = "\n".join(ci_failures) or "CI failed (no details)"
+    return _spawn_fixer(state, failure_summary)
 
 
-def _handle_revising_result(state: dict, result: dict) -> dict:
-    """Handle result from REVISING subagent."""
+def _spawn_fixer(state: dict, ci_failures: str) -> dict:
+    """Spawn a FIXING subagent with full CI + review context."""
+    pr_number = state.get("pr_number")
+    issue_number = state.get("issue_number")
+
+    revision_count = state.get("revision_count", 0) + 1
+    state["revision_count"] = revision_count
+    _log(f"CI/review issues for PR #{pr_number}, fix attempt {revision_count}/{MAX_REVISIONS}")
+
+    if revision_count > MAX_REVISIONS:
+        return _handle_max_revisions(state)
+
+    # Store CI failures in context
+    state["phase_context"]["ci_failures"] = ci_failures
+
+    # Post failure comment
+    try:
+        github_client.post_comment(
+            pr_number,
+            f"⚠️ CI failed (attempt {revision_count}/{MAX_REVISIONS}).\n"
+            f"{ci_failures}\n"
+            f"Spawning fix subagent.",
+        )
+    except Exception as e:
+        _log(f"Failed to post comment: {e}")
+
+    _transition(state, "FIXING")
+
+    # Build fixing task (fetches review comments from GitHub inline)
+    fixing_task = _build_fixing_task(state)
+    return {
+        "action": "spawn_subagent",
+        "phase": "FIXING",
+        "task": fixing_task,
+        "timeout_seconds": PHASE_TIMEOUTS["FIXING"],
+        "pr_number": pr_number,
+        "issue_number": issue_number,
+        "revision_count": revision_count,
+        "reason": f"CI/review failed, fix attempt {revision_count}",
+    }
+
+
+def _handle_fixing_result(state: dict, result: dict) -> dict:
+    """Handle result from FIXING subagent."""
     status = result.get("status", "unknown")
     pr_number = state.get("pr_number")
     issue_number = state.get("issue_number")
     branch = state.get("branch")
 
-    if status == "fixes_pushed":
+    if status in ("fixes_pushed", "complete"):
         # Update last commit SHA
         if branch:
-            commits = github_client.get_branch_commits(branch, since_sha=None)
-            if commits:
-                state["last_commit_sha"] = commits[0]["sha"]
+            try:
+                commits = github_client.get_branch_commits(branch, since_sha=None)
+                if commits:
+                    state["last_commit_sha"] = commits[0]["sha"]
+            except Exception:
+                pass
 
         _transition(state, "REVIEWING")
-        _log(f"Fixes pushed to {branch}, back to REVIEWING")
-
-        # Spawn reviewing subagent
-        reviewing_task = _build_reviewing_task(state)
+        _log(f"Fixes pushed to {branch}, back to REVIEWING (inline CI check)")
+        # Don't spawn anything — next conductor cycle will run inline CI check
         return {
-            "action": "spawn_subagent",
-            "phase": "REVIEWING",
-            "task": reviewing_task,
-            "timeout_seconds": PHASE_TIMEOUTS["REVIEWING"],
-            "pr_number": pr_number,
-            "issue_number": issue_number,
-            "reason": "Fixes pushed, re-reviewing",
+            "action": "skip",
+            "reason": f"Fixes pushed, will check CI on next cycle",
         }
 
     if status == "cannot_fix":
-        _log(f"REVISING subagent cannot fix issue #{issue_number}")
+        _log(f"FIXING subagent cannot fix issue #{issue_number}")
         return _handle_max_revisions(state)
 
     # Error
-    _log(f"REVISING subagent returned status: {status}")
-    state["diagnosis"] = f"REVISING subagent error: {result.get('errors')}"
-    state["phase_context"]["failed_phase"] = "REVISING"
+    _log(f"FIXING subagent returned status: {status}")
+    state["diagnosis"] = f"FIXING subagent error: {result.get('errors')}"
+    state["phase_context"]["failed_phase"] = "FIXING"
     _transition(state, "DIAGNOSING")
     diag_task = _build_diagnosing_task(state)
     return {
@@ -884,7 +929,7 @@ def _handle_revising_result(state: dict, result: dict) -> dict:
         "task": diag_task,
         "timeout_seconds": PHASE_TIMEOUTS["DIAGNOSING"],
         "issue_number": issue_number,
-        "reason": "REVISING subagent error",
+        "reason": "FIXING subagent error",
     }
 
 
@@ -1184,8 +1229,7 @@ def _handle_discovering_result(state: dict, result: dict) -> dict:
 RESULT_HANDLERS = {
     "DISCOVERING": _handle_discovering_result,
     "WORKING": _handle_working_result,
-    "REVIEWING": _handle_reviewing_result,
-    "REVISING": _handle_revising_result,
+    "FIXING": _handle_fixing_result,
     "MONITORING": _handle_monitoring_result,
     "DIAGNOSING": _handle_diagnosing_result,
 }
@@ -1228,10 +1272,11 @@ def _handle_max_revisions(state: dict) -> dict:
 # Inline phases are handled directly; subagent phases use the generic dispatcher
 INLINE_HANDLERS = {
     "IDLE": _handle_idle,
+    "REVIEWING": _check_ci_inline,
     "DEPLOYING": _handle_deploying,
 }
 
-SUBAGENT_PHASES = {"DISCOVERING", "WORKING", "REVIEWING", "REVISING", "MONITORING", "DIAGNOSING"}
+SUBAGENT_PHASES = {"DISCOVERING", "WORKING", "FIXING", "MONITORING", "DIAGNOSING"}
 
 
 def run() -> dict:
@@ -1250,6 +1295,13 @@ def run() -> dict:
 
     # Re-read phase after potential correction
     phase = state.get("phase", "IDLE")
+
+    # Backward compat: REVISING → FIXING
+    if phase == "REVISING":
+        _log("Migrating REVISING → FIXING")
+        state["phase"] = "FIXING"
+        phase = "FIXING"
+        _save_state(state)
 
     # Inline phases — handle directly
     if phase in INLINE_HANDLERS:
