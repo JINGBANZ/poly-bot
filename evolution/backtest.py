@@ -1,7 +1,12 @@
 """Backtesting framework for strategy changes.
 
-Provides historical simulation capabilities for validating
-strategy parameter changes before deployment.
+Two modes:
+1. Trade replay: Replay our own trade_log.jsonl to analyze what-if scenarios
+   with different parameters (stop_loss, take_profit, position sizing).
+2. Market simulation: Fetch resolved markets from Gamma API and simulate
+   the cheap-side strategy at scale (this is what bot/backtest.py does).
+
+This module handles mode 1 (trade replay). For mode 2, see bot/backtest.py.
 """
 
 import json
@@ -18,14 +23,17 @@ BACKTEST_RESULT_FILE = STATE_DIR / "last_backtest.json"
 def load_historical_trades(lookback_hours: int = 720) -> list:
     """Load historical trades from trade_log.jsonl.
 
+    Pairs BUY and SELL trades for the same market to compute realized P&L.
+    Unpaired BUYs (still open) are excluded from backtesting.
+
     Args:
         lookback_hours: How far back to look (default 30 days)
 
     Returns:
-        List of trade dicts sorted by timestamp
+        List of paired trade dicts with entry/exit prices and realized P&L
     """
     cutoff = time.time() - (lookback_hours * 3600)
-    trades = []
+    raw_trades = []
 
     try:
         if not TRADE_LOG.exists():
@@ -42,15 +50,55 @@ def load_historical_trades(lookback_hours: int = 720) -> list:
                     if isinstance(ts, str):
                         from datetime import datetime
                         ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+                        trade["_ts"] = ts
+                    else:
+                        trade["_ts"] = ts
                     if ts >= cutoff:
-                        trades.append(trade)
+                        raw_trades.append(trade)
                 except (json.JSONDecodeError, ValueError):
                     continue
     except IOError:
         return []
 
-    trades.sort(key=lambda t: t.get("timestamp", 0))
-    return trades
+    raw_trades.sort(key=lambda t: t.get("_ts", 0))
+
+    # Pair BUYs with SELLs by token_id to get complete round-trip trades
+    buys = {}  # token_id -> trade
+    paired = []
+    for t in raw_trades:
+        action = t.get("action", "").upper()
+        token_id = t.get("token_id", "")
+        name = t.get("name", "")
+
+        if action == "BUY":
+            buys[token_id] = t
+            # Also index by name for fuzzy matching (some sells use different token_id)
+            buys[name] = t
+        elif action in ("SELL", "LIMIT_SELL"):
+            # Find matching buy
+            buy = buys.get(token_id) or buys.get(name)
+            if buy:
+                entry_price = buy.get("price", 0)
+                exit_price = t.get("price", 0)
+                shares = min(float(buy.get("shares", 0)), float(t.get("shares", 0)))
+                profit = t.get("profit")
+                if profit is None and entry_price > 0 and exit_price > 0:
+                    profit = (exit_price - entry_price) * shares
+
+                paired.append({
+                    "name": name or buy.get("name", "unknown"),
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "shares": shares,
+                    "amount_usd": float(buy.get("amount_usd", 0)),
+                    "profit": float(profit) if profit is not None else 0,
+                    "reason": t.get("reason", ""),
+                    "buy_ts": buy.get("_ts", 0),
+                    "sell_ts": t.get("_ts", 0),
+                    "hold_hours": (t.get("_ts", 0) - buy.get("_ts", 0)) / 3600,
+                })
+
+    return paired
 
 
 def run_backtest(
@@ -58,16 +106,17 @@ def run_backtest(
     historical_data: Optional[list] = None,
     lookback_hours: int = 720,
 ) -> dict:
-    """Run a backtest with given strategy parameters.
+    """Run a backtest with given strategy parameters on paired trade data.
+
+    Replays historical round-trip trades and applies what-if stop_loss/take_profit
+    to see how different parameters would have performed.
 
     Args:
         strategy_params: Dict of strategy parameters to test.
-            Expected keys depend on strategy type, e.g.:
-            - threshold: min probability threshold for entry
-            - stop_loss: stop loss percentage
-            - take_profit: take profit percentage
+            - stop_loss: max loss as fraction (e.g., 0.35 = 35%)
+            - take_profit: target profit as fraction (e.g., 2.0 = 200%)
             - max_position: max position size in USD
-        historical_data: Optional pre-loaded trade data
+        historical_data: Optional pre-loaded paired trade data
         lookback_hours: How far back to look if no data provided
 
     Returns:
@@ -78,15 +127,15 @@ def run_backtest(
 
     if not historical_data:
         return {
-            "error": "No historical data available",
+            "error": "No completed round-trip trades available for backtesting",
             "trades_simulated": 0,
+            "note": "Need BUY+SELL pairs in trade_log.jsonl. Open positions are excluded.",
         }
 
-    # Simulation
-    threshold = strategy_params.get("threshold", 0.0)
-    stop_loss = strategy_params.get("stop_loss", 0.15)
-    take_profit = strategy_params.get("take_profit", 0.30)
-    max_position = strategy_params.get("max_position", 50.0)
+    # Simulation parameters
+    stop_loss = strategy_params.get("stop_loss", 0.35)
+    take_profit = strategy_params.get("take_profit", 2.0)
+    max_position = strategy_params.get("max_position", 2.0)
 
     simulated_trades = []
     running_pnl = 0.0
@@ -95,51 +144,53 @@ def run_backtest(
     daily_returns = []
 
     for trade in historical_data:
-        entry_price = trade.get("entry_price", trade.get("price", 0))
-        exit_price = trade.get("exit_price", entry_price)
-        probability = trade.get("probability", trade.get("prob", 0.5))
-        size = min(trade.get("size", trade.get("amount", 10)), max_position)
+        entry_price = trade.get("entry_price", 0)
+        exit_price = trade.get("exit_price", 0)
+        amount = min(trade.get("amount_usd", 2.0), max_position)
 
-        # Apply threshold filter
-        if probability < threshold:
+        if entry_price <= 0 or exit_price <= 0:
             continue
 
-        # Simulate P&L
-        if entry_price > 0 and exit_price > 0:
-            raw_pnl = (exit_price - entry_price) * size
+        shares = amount / entry_price
+        pct_change = (exit_price - entry_price) / entry_price
 
-            # Apply stop loss / take profit
-            pct_change = (exit_price - entry_price) / entry_price
-            if pct_change <= -stop_loss:
-                raw_pnl = -stop_loss * entry_price * size
-            elif pct_change >= take_profit:
-                raw_pnl = take_profit * entry_price * size
+        # Apply simulated stop_loss / take_profit
+        if pct_change <= -stop_loss:
+            sim_exit = entry_price * (1 - stop_loss)
+        elif pct_change >= take_profit:
+            sim_exit = entry_price * (1 + take_profit)
+        else:
+            sim_exit = exit_price  # Actual exit was within bounds
 
-            running_pnl += raw_pnl
-            peak_pnl = max(peak_pnl, running_pnl)
-            drawdown = peak_pnl - running_pnl
-            max_drawdown = max(max_drawdown, drawdown)
+        sim_pnl = (sim_exit - entry_price) * shares
 
-            simulated_trades.append({
-                "pnl": round(raw_pnl, 4),
-                "entry": entry_price,
-                "exit": exit_price,
-                "size": size,
-            })
-            daily_returns.append(raw_pnl)
+        running_pnl += sim_pnl
+        peak_pnl = max(peak_pnl, running_pnl)
+        drawdown = peak_pnl - running_pnl
+        max_drawdown = max(max_drawdown, drawdown)
+
+        simulated_trades.append({
+            "name": trade.get("name", "?"),
+            "pnl": round(sim_pnl, 4),
+            "actual_pnl": round(trade.get("profit", 0), 4),
+            "entry": entry_price,
+            "exit": round(sim_exit, 4),
+            "actual_exit": exit_price,
+            "hold_hours": round(trade.get("hold_hours", 0), 1),
+        })
+        daily_returns.append(sim_pnl)
 
     # Calculate metrics
     total = len(simulated_trades)
     if total == 0:
         return {
             "trades_simulated": 0,
-            "note": "No trades passed filters",
+            "note": "No trades had valid entry/exit prices",
             "params": strategy_params,
         }
 
     wins = sum(1 for t in simulated_trades if t["pnl"] > 0)
     win_rate = (wins / total) * 100
-
     avg_pnl = running_pnl / total
 
     # Sharpe ratio (simplified: mean / std of returns)
@@ -163,6 +214,7 @@ def run_backtest(
         "params": strategy_params,
         "lookback_hours": lookback_hours,
         "timestamp": time.time(),
+        "trades": simulated_trades,
     }
 
     # Save result

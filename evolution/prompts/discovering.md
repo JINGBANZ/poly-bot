@@ -18,6 +18,22 @@ Use the virtualenv: `source polymarket-venv/bin/activate`
 - Write results to `evolution/state/phase_result.json` when done
 - Append a log entry to `evolution/state/discovery_log.jsonl`
 
+## DEDUPLICATION (MANDATORY)
+Before creating ANY issue, you MUST check for duplicates:
+
+1. **Read recent discovery log** — `cat evolution/state/discovery_log.jsonl | tail -20`
+2. **List ALL closed+open issues** — `python3 -c "import sys; sys.path.insert(0,'.'); from evolution import github_client; issues=github_client.list_issues(state='all'); [print(f'#{i[\"number\"]}: [{i[\"state\"]}] {i[\"title\"]}') for i in issues if 'pull_request' not in i]"`
+3. **Check if your finding is the same ROOT CAUSE** as any existing issue (open OR recently closed within 7 days)
+
+If the same root cause was already addressed by a closed issue, do NOT re-create it. Instead:
+- If the fix didn't work (problem persists), create a NEW issue that references the old one: "Follow-up to #N — fix didn't resolve the underlying issue"
+- If it's a genuinely different symptom of the same cause, write "no_work" — the existing fix should handle it
+
+**Common duplicate traps:**
+- "Position X is at -Y%" when an issue about that position already exists
+- "Win rate is low" when a strategy issue already exists
+- "Errors in logs" when a bug issue for those errors already exists
+
 ## Discovery Categories (run in order, stop at first finding)
 
 ### 1. Trade Pattern Analysis
