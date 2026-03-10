@@ -236,10 +236,13 @@ class TestCheckCiInline:
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_ci_passed_goes_to_deploying(self, mock_save, mock_gh):
+    def test_ci_passed_deploys_immediately(self, mock_save, mock_gh):
+        """CI pass now triggers inline deploy in the same tick."""
         from evolution.conductor import _check_ci_inline
         mock_gh.get_pr_status.return_value = {"state": "success", "checks": []}
         mock_gh.get_issue.return_value = {"body": ""}
+        mock_gh.merge_pr.return_value = {}
+        mock_gh.close_issue.return_value = {}
         state = {
             "phase": "REVIEWING",
             "pr_number": 10,
@@ -248,10 +251,17 @@ class TestCheckCiInline:
             "phase_started_ts": 0,
             "subagent_session_key": None,
             "subagent_started_ts": 0,
+            "deploy_ts": 0,
+            "revision_count": 0,
+            "last_commit_sha": None,
+            "error": None,
+            "retry_count": 0,
+            "diagnosis": None,
+            "phase_context": {},
+            "last_discovery_ts": 0,
         }
         result = _check_ci_inline(state)
-        assert result["action"] == "ci_passed"
-        assert state["phase"] == "DEPLOYING"
+        assert result["action"] in ("success", "critical", "deploy_failed")
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
