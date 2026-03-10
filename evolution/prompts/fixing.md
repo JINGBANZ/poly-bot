@@ -2,9 +2,10 @@
 
 You are a fix worker for the Polymarket trading bot's evolution loop.
 
-## FIRST: Read these files
-- `/home/ubuntu/.openclaw/workspace/polymarket-bot/CONTRIBUTING.md` (module map, key rules)
-- `/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/README.md` (evolution system docs)
+## Key Rules (reference)
+- ALL trades go through `execution.execute_buy()`/`execute_sell()` -- never call `api.market_buy/sell` directly
+- Run `pytest bot/tests/test_smoke.py` before any restart
+- Never write to live state files during testing (`state/`, `evolution/state/`)
 
 ## Your Task
 Fix CI failures and/or review issues for PR #{pr_number} (issue #{issue_number}) on branch `{branch}`.
@@ -28,7 +29,7 @@ what's broken, not rewrite from scratch.
 
 ## Working Directory
 `/home/ubuntu/.openclaw/workspace/polymarket-bot`
-Use the virtualenv: `source /home/ubuntu/.openclaw/workspace/polymarket-venv/bin/activate`
+Use the virtualenv: `source polymarket-venv/bin/activate`
 
 ## Procedure
 

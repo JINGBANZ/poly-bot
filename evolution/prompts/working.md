@@ -2,9 +2,10 @@
 
 You are a worker improving the Polymarket trading bot.
 
-## FIRST: Read these files
-- `/home/ubuntu/.openclaw/workspace/polymarket-bot/CONTRIBUTING.md` (module map, key rules)
-- `/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/README.md` (evolution system docs)
+## Bot Architecture (reference)
+Daemon service runs `bot/main.py` every 5 min. Key modules: `execution.py` (all trades), `guardrails.py` (SL/TP), `api.py` (CLOB), `portfolio.py` (positions), `threshold_monitor.py` (crypto), `alerts.py` (alert queue), `resolver.py` (market resolution), `redeemer.py` (auto-redemption).
+State files: `state/positions.json`, `state/trade_log.jsonl`, `state/pending_alerts.jsonl`, `state/resolved_cache.json`.
+Key rules: ALL trades go through `execution.execute_buy()`/`execute_sell()` -- never call `api.market_buy/sell` directly. Run `pytest bot/tests/test_smoke.py` before any restart. Never write to live state files during testing.
 
 ## Your Task
 Issue: #{number} — {title}
@@ -13,7 +14,13 @@ Issue: #{number} — {title}
 
 ## Rules
 - Work ONLY on branch: `improve/{number}`
-- Create and checkout the branch first: `git checkout -b improve/{number}`
+- Create the branch from latest main:
+  ```bash
+  git fetch origin main
+  git checkout main
+  git reset --hard origin/main
+  git checkout -b improve/{number}
+  ```
 - The pre-commit hook runs pytest automatically — your commit will fail if tests don't pass
 - Commit messages must reference the issue: `fix #{number}: description`
 - Do NOT restart the bot (`polymarket-bot` service)

@@ -86,6 +86,9 @@ def _load_state() -> dict:
         "subagent_session_key": None,
         "subagent_started_ts": 0,
         "phase_context": {},
+
+        # Discovery cooldown
+        "last_discovery_ts": 0,
     }
     try:
         if STATE_FILE.exists():
@@ -468,8 +471,17 @@ def _handle_idle(state: dict) -> dict:
         _log(f"Skipping: {result['reason']}")
         return {"action": "skip", "reason": result["reason"]}
 
-    # Nothing found fast — spawn DISCOVERING subagent for deeper analysis
+    # Nothing found fast -- check discovery cooldown
+    DISCOVERY_COOLDOWN = 3600  # 1 hour between deep discovery runs
+    last_disc = state.get("last_discovery_ts", 0)
+    since_last = _now() - last_disc
+    if since_last < DISCOVERY_COOLDOWN:
+        remaining = int(DISCOVERY_COOLDOWN - since_last)
+        _log(f"Discovery cooldown: {remaining}s remaining, skipping deep discovery")
+        return {"action": "skip", "reason": f"Discovery cooldown ({remaining}s remaining)"}
+
     _log("Fast checks found nothing, spawning DISCOVERING subagent")
+    state["last_discovery_ts"] = _now()
     _transition(state, "DISCOVERING")
 
     try:
@@ -563,7 +575,7 @@ def _handle_deploying(state: dict) -> dict:
 
     # 2. Wait for service to stabilize, then health check
     import time as _time
-    _time.sleep(60)
+    _time.sleep(30)
 
     try:
         health = check_health()
@@ -895,14 +907,10 @@ def _check_ci_inline(state: dict) -> dict:
         except Exception as e:
             _log(f"Criteria check failed (proceeding anyway): {e}")
 
-        _log(f"CI passed for PR #{pr_number}, moving to DEPLOYING")
+        _log(f"CI passed for PR #{pr_number}, deploying immediately")
         _transition(state, "DEPLOYING")
-        return {
-            "action": "ci_passed",
-            "pr_number": pr_number,
-            "issue_number": issue_number,
-            "reason": "CI passed and criteria met, deploying",
-        }
+        # Deploy inline in the same tick
+        return _handle_deploying(state)
 
     # CI failed — collect failure details and spawn fixer
     checks = ci_status.get("checks", [])
