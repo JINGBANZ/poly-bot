@@ -81,24 +81,6 @@ class TestValidateStatePhantomIssue:
         assert state["phase"] == "IDLE"
 
     @patch("evolution.conductor.github_client")
-    @patch("evolution.conductor._save_state")
-    def test_closed_issue_ok_during_monitoring(self, mock_save, mock_gh):
-        """MONITORING phase can legitimately have a closed issue (we just closed it)."""
-        from evolution.conductor import _validate_state
-        mock_gh.get_issue.return_value = {"state": "closed", "number": 10}
-        state = {
-            "phase": "MONITORING",
-            "issue_number": 10,
-            "pr_number": 15,
-            "branch": "improve/10",
-            "phase_started_ts": time.time(),
-            "subagent_started_ts": time.time(),
-        }
-        # Should NOT reset — MONITORING is excluded from the closed-issue check
-        result = _validate_state(state)
-        assert result is None
-
-    @patch("evolution.conductor.github_client")
     def test_open_issue_passes(self, mock_gh):
         from evolution.conductor import _validate_state
         mock_gh.get_issue.return_value = {"state": "open", "number": 10}
@@ -169,7 +151,7 @@ class TestValidateStatePR:
         mock_gh.get_issue.return_value = {"state": "open", "number": 10}
         mock_gh.get_pr.side_effect = Exception("404")
         state = {
-            "phase": "REVISING",
+            "phase": "FIXING",
             "issue_number": 10,
             "pr_number": 999,
             "branch": "improve/10",
