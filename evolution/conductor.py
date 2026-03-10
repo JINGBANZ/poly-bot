@@ -6,15 +6,20 @@ outputs JSON results for the cron wrapper to act on (spawn subagents, notify).
 The conductor NEVER does work itself — it only manages state transitions
 and tells the cron wrapper which subagent to spawn.
 
-Phase flow: IDLE → DISCOVERING → WORKING → REVIEWING (inline) → DEPLOYING → MONITORING
+Phase flow: IDLE → DISCOVERING → WORKING → REVIEWING (inline) → DEPLOYING (inline) → IDLE
                                                 ↓ (CI/review fails)
                                              FIXING (subagent)
                                                 ↓ (pushes fixes)
                                              REVIEWING (inline)
 
+DEPLOYING merges the PR, pulls code, restarts the bot, waits briefly, and runs
+an inline health check. No separate MONITORING phase — if errors appear later,
+the next discovery cycle catches them.
+
 REVIEWING is inline (no subagent) — just checks CI + fetches review comments.
 FIXING replaces the old REVIEWING+REVISING subagents with a single subagent
 that gets full CI failure details AND inline review comments from GitHub.
+DEPLOYING is inline — merges PR, pulls, restarts, health-checks (no subagent).
 
 Subagents communicate results back via evolution/state/phase_result.json.
 
@@ -57,7 +62,6 @@ PHASE_TIMEOUTS = {
     "DISCOVERING": 900,   # 15 min
     "WORKING": 1500,      # 25 min
     "FIXING": 1500,       # 25 min (replaces REVIEWING+REVISING)
-    "MONITORING": 2100,   # 35 min (needs full 30 min monitoring window)
     "DIAGNOSING": 600,    # 10 min
 }
 
@@ -194,7 +198,7 @@ def _validate_state(state: dict) -> dict | None:
     if issue_number:
         try:
             issue = github_client.get_issue(issue_number)
-            if issue.get("state") == "closed" and phase not in ("MONITORING",):
+            if issue.get("state") == "closed":
                 _log(f"STATE CORRECTION: Issue #{issue_number} is closed but phase is {phase}. Resetting to IDLE.")
                 _reset_state(state)
                 return {"action": "self_corrected", "reason": f"Issue #{issue_number} is closed, phase was {phase}"}
@@ -231,7 +235,7 @@ def _validate_state(state: dict) -> dict | None:
                 return {"action": "self_corrected", "reason": f"Phase {phase} stuck for {int(phase_age)}s with no subagent"}
 
     # 4. Validate issue_number is set for non-IDLE/non-DISCOVERING phases
-    if phase in ("WORKING", "REVIEWING", "FIXING", "DEPLOYING", "MONITORING", "DIAGNOSING"):
+    if phase in ("WORKING", "REVIEWING", "FIXING", "DEPLOYING", "DIAGNOSING"):
         if not issue_number:
             _log(f"STATE CORRECTION: Phase {phase} but no issue_number. Resetting to IDLE.")
             _reset_state(state)
@@ -404,16 +408,6 @@ def _build_fixing_task(state: dict) -> str:
             .replace("{review_comments}", review_comments))
 
 
-def _build_monitoring_task(state: dict) -> str:
-    """Build the task string for a MONITORING subagent."""
-    template = _load_prompt("monitoring")
-    return (template
-            .replace("{pr_number}", str(state.get("pr_number", "")))
-            .replace("{issue_number}", str(state.get("issue_number", "")))
-            .replace("{deploy_ts}", str(state.get("deploy_ts", "")))
-            .replace("{changes_summary}", state.get("phase_context", {}).get("changes_summary", "No summary available")))
-
-
 def _build_diagnosing_task(state: dict) -> str:
     """Build the task string for a DIAGNOSING subagent."""
     template = _load_prompt("diagnosing")
@@ -447,7 +441,6 @@ TASK_BUILDERS = {
         diagnosis=state.get("diagnosis"),
     ),
     "FIXING": _build_fixing_task,
-    "MONITORING": _build_monitoring_task,
     "DIAGNOSING": _build_diagnosing_task,
 }
 
@@ -541,7 +534,14 @@ def _transition_to_working(state: dict, result: dict) -> dict:
 
 
 def _handle_deploying(state: dict) -> dict:
-    """DEPLOYING: Merge PR, pull, restart bot (inline — no subagent)."""
+    """DEPLOYING: Merge PR, pull, restart bot, health check — all inline.
+
+    Combines the old DEPLOYING + MONITORING into one inline phase.
+    After merge+restart, waits 60s and runs a health check.
+    - healthy/degraded → close issue, back to IDLE
+    - critical → create regression issue, back to IDLE
+    If errors appear later, the next discovery cycle catches them.
+    """
     pr_number = state.get("pr_number")
     issue_number = state.get("issue_number")
 
@@ -550,33 +550,105 @@ def _handle_deploying(state: dict) -> dict:
         _save_state(state)
         return {"action": "error", "reason": "No PR number in DEPLOYING state"}
 
+    # 1. Merge and deploy
     try:
-        result = merge_and_deploy(pr_number)
-        deploy_ts = _now()
-        state["deploy_ts"] = deploy_ts
-        state["phase_context"]["changes_summary"] = (
-            f"PR #{pr_number} for issue #{issue_number} merged and deployed."
-        )
-        _transition(state, "MONITORING")
-
-        _log(f"Deployed PR #{pr_number} for issue #{issue_number}")
-
-        # Immediately return spawn instruction for monitoring subagent
-        monitoring_task = _build_monitoring_task(state)
-        return {
-            "action": "spawn_subagent",
-            "phase": "MONITORING",
-            "task": monitoring_task,
-            "timeout_seconds": PHASE_TIMEOUTS["MONITORING"],
-            "pr_number": pr_number,
-            "issue_number": issue_number,
-            "reason": f"Successfully deployed PR #{pr_number}, starting monitoring",
-        }
+        merge_and_deploy(pr_number)
     except RuntimeError as e:
         _log(f"Deploy failed: {e}")
         state["phase"] = "IDLE"
         _save_state(state)
         return {"action": "deploy_failed", "reason": f"Deploy failed: {e}"}
+
+    _log(f"Deployed PR #{pr_number} for issue #{issue_number}, running health check...")
+
+    # 2. Wait for service to stabilize, then health check
+    import time as _time
+    _time.sleep(60)
+
+    try:
+        health = check_health()
+    except Exception as e:
+        _log(f"Health check failed: {e}")
+        health = {"severity": "healthy", "reason": f"Health check error (assuming OK): {e}", "details": {}}
+
+    severity = health.get("severity", "healthy")
+    _log(f"Post-deploy health: {severity} — {health.get('reason')}")
+
+    # 3. Handle results
+    if severity == "critical":
+        # Service is down — create regression issue
+        _log(f"CRITICAL: Service down after deploying issue #{issue_number}")
+        if issue_number:
+            try:
+                github_client.add_label(issue_number, "regression")
+                github_client.post_comment(
+                    issue_number,
+                    f"🚨 **CRITICAL** — Service down after deploy: {health.get('reason')}\n\n"
+                    f"Fix-forward policy — needs immediate attention.",
+                )
+            except Exception:
+                pass
+
+        _reset_state(state)
+        return {
+            "action": "critical",
+            "issue_number": issue_number,
+            "pr_number": pr_number,
+            "reason": f"Service down after deploy: {health.get('reason')}",
+        }
+
+    # healthy or degraded — deploy succeeded
+    if severity == "degraded":
+        details = health.get("details", {})
+        error_lines = details.get("error_lines", [])
+        error_count = details.get("recent_errors", len(error_lines))
+        try:
+            error_sample = "\n".join(f"  {l}" for l in error_lines[:10])
+            github_client.create_issue(
+                title=f"Bot logging {error_count} errors — investigate and fix",
+                body=(
+                    f"## Problem\n"
+                    f"Health check after deploying PR #{pr_number} (issue #{issue_number}) "
+                    f"found {error_count} errors in the first minute.\n\n"
+                    f"The service IS running (not critical), but these errors need fixing.\n\n"
+                    f"## Error Sample\n```\n{error_sample}\n```\n\n"
+                    f"## Acceptance Criteria\n"
+                    f"- [ ] Identify root cause of each error type\n"
+                    f"- [ ] Fix or handle the errors properly\n"
+                    f"- [ ] No recurring errors in bot logs after fix\n"
+                ),
+                labels=["bug", "agent-created"],
+            )
+            _log(f"Created issue for {error_count} degraded errors")
+        except Exception as e:
+            _log(f"Failed to create degraded-health issue: {e}")
+
+    # Close the original issue
+    if issue_number:
+        try:
+            suffix = ""
+            if severity == "degraded":
+                suffix = "\n\n⚠️ Note: some errors detected post-deploy — see new issue."
+            github_client.close_issue(
+                issue_number,
+                f"✅ Successfully deployed and verified. PR #{pr_number} merged.{suffix}",
+            )
+        except Exception as e:
+            _log(f"Failed to close issue: {e}")
+
+    try:
+        update_baseline()
+    except Exception as e:
+        _log(f"Failed to update baseline: {e}")
+
+    _reset_state(state)
+
+    return {
+        "action": "success",
+        "issue_number": issue_number,
+        "pr_number": pr_number,
+        "reason": f"Deployed PR #{pr_number} — health: {severity}",
+    }
 
 
 # --- Subagent phase handler (generic dispatcher) ---
@@ -933,111 +1005,6 @@ def _handle_fixing_result(state: dict, result: dict) -> dict:
     }
 
 
-def _handle_monitoring_result(state: dict, result: dict) -> dict:
-    """Handle result from MONITORING subagent.
-
-    Severity-based response:
-    - healthy: close issue, success
-    - degraded: deploy is fine (service running), create issue for the errors, success
-    - critical: service down, alert and block further deploys
-    """
-    status = result.get("status", "unknown")
-    issue_number = state.get("issue_number")
-    pr_number = state.get("pr_number")
-
-    if status in ("healthy", "degraded"):
-        _log(f"Deploy {'healthy' if status == 'healthy' else 'degraded (errors found)'} for issue #{issue_number}")
-
-        # Close the current issue — deploy succeeded
-        if issue_number:
-            try:
-                github_client.close_issue(
-                    issue_number,
-                    f"✅ Successfully deployed and verified. PR #{pr_number} merged."
-                    + (f"\n\n⚠️ Note: degraded health detected — see new issue for error details."
-                       if status == "degraded" else ""),
-                )
-            except Exception as e:
-                _log(f"Failed to close issue: {e}")
-
-        # If degraded, create a new issue for the errors
-        if status == "degraded":
-            details = result.get("details", {})
-            error_lines = details.get("error_lines", [])
-            error_count = details.get("recent_errors", len(error_lines))
-            try:
-                error_sample = "\n".join(f"  {l}" for l in error_lines[:10])
-                github_client.create_issue(
-                    title=f"Bot logging {error_count} errors — investigate and fix",
-                    body=(
-                        f"## Problem\n"
-                        f"Health check after deploying PR #{pr_number} (issue #{issue_number}) "
-                        f"found {error_count} errors in the last 5 minutes.\n\n"
-                        f"The service IS running (not critical), but these errors need fixing.\n\n"
-                        f"## Error Sample\n```\n{error_sample}\n```\n\n"
-                        f"## Acceptance Criteria\n"
-                        f"- [ ] Identify root cause of each error type\n"
-                        f"- [ ] Fix or handle the errors properly\n"
-                        f"- [ ] No recurring errors in bot logs after fix\n"
-                    ),
-                    labels=["bug", "agent-created"],
-                )
-                _log(f"Created issue for {error_count} degraded errors")
-            except Exception as e:
-                _log(f"Failed to create degraded-health issue: {e}")
-
-        try:
-            update_baseline()
-        except Exception as e:
-            _log(f"Failed to update baseline: {e}")
-
-        state["phase"] = "IDLE"
-        state["pr_number"] = None
-        state["branch"] = None
-        state["issue_number"] = None
-        state["phase_context"] = {}
-        state["diagnosis"] = None
-        state["retry_count"] = 0
-        _save_state(state)
-
-        return {
-            "action": "success",
-            "issue_number": issue_number,
-            "pr_number": pr_number,
-            "reason": f"Deploy verified {'healthy' if status == 'healthy' else 'degraded — error issue created'}",
-        }
-
-    if status == "critical":
-        _log(f"CRITICAL: Service down after deploying issue #{issue_number}")
-        details = result.get("details", {})
-
-        if issue_number:
-            try:
-                github_client.add_label(issue_number, "regression")
-                github_client.post_comment(
-                    issue_number,
-                    f"🚨 **CRITICAL** — Service down after deploy: {details.get('reason', 'unknown')}\n\n"
-                    f"Deploy did NOT revert (fix-forward policy). Needs immediate attention.",
-                )
-            except Exception:
-                pass
-
-        state["phase"] = "IDLE"
-        state["pr_number"] = None
-        state["branch"] = None
-        state["phase_context"] = {}
-        _save_state(state)
-
-        return {
-            "action": "critical",
-            "issue_number": issue_number,
-            "reason": f"Service down after deploy: {details.get('reason', 'unknown')}",
-        }
-
-    _log(f"MONITORING subagent returned unexpected status: {status}")
-    return {"action": "error", "reason": f"MONITORING returned unexpected status: {status}"}
-
-
 def _handle_diagnosing_result(state: dict, result: dict) -> dict:
     """Handle result from DIAGNOSING subagent."""
     status = result.get("status", "unknown")
@@ -1230,7 +1197,6 @@ RESULT_HANDLERS = {
     "DISCOVERING": _handle_discovering_result,
     "WORKING": _handle_working_result,
     "FIXING": _handle_fixing_result,
-    "MONITORING": _handle_monitoring_result,
     "DIAGNOSING": _handle_diagnosing_result,
 }
 
@@ -1276,7 +1242,7 @@ INLINE_HANDLERS = {
     "DEPLOYING": _handle_deploying,
 }
 
-SUBAGENT_PHASES = {"DISCOVERING", "WORKING", "FIXING", "MONITORING", "DIAGNOSING"}
+SUBAGENT_PHASES = {"DISCOVERING", "WORKING", "FIXING", "DIAGNOSING"}
 
 
 def run() -> dict:
@@ -1296,12 +1262,16 @@ def run() -> dict:
     # Re-read phase after potential correction
     phase = state.get("phase", "IDLE")
 
-    # Backward compat: REVISING → FIXING
+    # Backward compat: REVISING → FIXING, MONITORING → IDLE
     if phase == "REVISING":
         _log("Migrating REVISING → FIXING")
         state["phase"] = "FIXING"
         phase = "FIXING"
         _save_state(state)
+    if phase == "MONITORING":
+        _log("Migrating MONITORING → IDLE (monitoring is now inline in DEPLOYING)")
+        _reset_state(state)
+        phase = "IDLE"
 
     # Inline phases — handle directly
     if phase in INLINE_HANDLERS:

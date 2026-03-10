@@ -156,14 +156,15 @@ class TestSubagentPhaseHandler:
     @patch("evolution.conductor._read_phase_result")
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
-    def test_working_timeout_with_commits_goes_to_reviewing(self, mock_save, mock_gh, mock_read):
-        """When WORKING times out but branch has commits, treat as success (go to REVIEWING)."""
+    def test_working_timeout_with_commits_opens_pr(self, mock_save, mock_gh, mock_read):
+        """When WORKING times out but branch has commits, treat as success — opens PR and checks CI."""
         from evolution.conductor import _handle_subagent_phase
         mock_read.return_value = None
-        # Simulate commits found on branch — timeout fallback treats as success
         mock_gh.branch_exists.return_value = True
         mock_gh.get_branch_commits.return_value = [{"sha": "abc123"}]
         mock_gh.create_pr.return_value = {"number": 10}
+        # CI pending → returns skip (waiting for CI)
+        mock_gh.get_pr_status.return_value = {"state": "pending", "checks": []}
         state = {
             "phase": "WORKING",
             "subagent_session_key": None,
@@ -175,8 +176,9 @@ class TestSubagentPhaseHandler:
             "phase_context": {"issue_title": "Test", "issue_body": "Body"},
         }
         result = _handle_subagent_phase(state)
-        assert result["action"] == "spawn_subagent"
-        assert result["phase"] == "REVIEWING"
+        # PR opened, CI pending → REVIEWING phase, skip action
+        assert state["pr_number"] == 10
+        assert state["phase"] == "REVIEWING"
 
 
 class TestHandleWorkingResult:
@@ -208,6 +210,8 @@ class TestHandleWorkingResult:
         mock_gh.branch_exists.return_value = True
         mock_gh.get_branch_commits.return_value = [{"sha": "abc123"}]
         mock_gh.create_pr.return_value = {"number": 10}
+        # CI pending → will transition to REVIEWING and skip
+        mock_gh.get_pr_status.return_value = {"state": "pending", "checks": []}
 
         state = {
             "phase": "WORKING",
@@ -221,18 +225,21 @@ class TestHandleWorkingResult:
         }
         result_data = {"status": "commits_pushed"}
         result = _handle_working_result(state, result_data)
-        assert result["action"] == "spawn_subagent"
-        assert result["phase"] == "REVIEWING"
+        # PR opened, CI pending → skip (waiting for CI on next cycle)
+        assert result["action"] == "skip"
+        assert state["phase"] == "REVIEWING"
         assert state["pr_number"] == 10
 
 
-class TestHandleReviewingResult:
-    """Test REVIEWING result handler."""
+class TestCheckCiInline:
+    """Test inline CI check (REVIEWING phase)."""
 
     @patch("evolution.conductor.github_client")
     @patch("evolution.conductor._save_state")
     def test_ci_passed_goes_to_deploying(self, mock_save, mock_gh):
-        from evolution.conductor import _handle_reviewing_result
+        from evolution.conductor import _check_ci_inline
+        mock_gh.get_pr_status.return_value = {"state": "success", "checks": []}
+        mock_gh.get_issue.return_value = {"body": ""}
         state = {
             "phase": "REVIEWING",
             "pr_number": 10,
@@ -242,10 +249,48 @@ class TestHandleReviewingResult:
             "subagent_session_key": None,
             "subagent_started_ts": 0,
         }
-        result_data = {"status": "ci_passed", "details": {}}
-        result = _handle_reviewing_result(state, result_data)
+        result = _check_ci_inline(state)
         assert result["action"] == "ci_passed"
         assert state["phase"] == "DEPLOYING"
+
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_ci_pending_returns_skip(self, mock_save, mock_gh):
+        from evolution.conductor import _check_ci_inline
+        mock_gh.get_pr_status.return_value = {"state": "pending", "checks": []}
+        state = {
+            "phase": "REVIEWING",
+            "pr_number": 10,
+            "issue_number": 6,
+        }
+        result = _check_ci_inline(state)
+        assert result["action"] == "skip"
+
+    @patch("evolution.conductor.github_client")
+    @patch("evolution.conductor._save_state")
+    def test_ci_failed_spawns_fixer(self, mock_save, mock_gh):
+        from evolution.conductor import _check_ci_inline
+        mock_gh.get_pr_status.return_value = {
+            "state": "failure",
+            "checks": [{"name": "tests", "conclusion": "failure"}],
+            "missing_required": [],
+        }
+        mock_gh.get_pr_review_comments.return_value = []
+        state = {
+            "phase": "REVIEWING",
+            "pr_number": 10,
+            "issue_number": 6,
+            "branch": "improve/6",
+            "revision_count": 0,
+            "phase_started_ts": 0,
+            "subagent_session_key": None,
+            "subagent_started_ts": 0,
+            "phase_context": {},
+        }
+        result = _check_ci_inline(state)
+        assert result["action"] == "spawn_subagent"
+        assert result["phase"] == "FIXING"
+        assert state["phase"] == "FIXING"
 
 
 class TestHandleDiagnosingResult:
