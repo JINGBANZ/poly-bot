@@ -55,7 +55,7 @@ PROMPTS_DIR = REPO_ROOT / "evolution" / "prompts"
 MONITOR_SECONDS = 1800         # 30 min monitoring window
 MAX_REVISIONS = 3              # Max revision attempts before giving up
 MAX_RETRIES_PER_ISSUE = 2      # Max times to retry an issue after diagnosis
-PHASE_STALENESS_SECONDS = 3600  # 1 hour — if a phase hasn't progressed, it's stale
+PHASE_STALENESS_SECONDS = 3000  # 50 min — ~2x max subagent timeout (25 min). Catches stuck phases faster.
 
 # Subagent timeouts per phase (seconds)
 PHASE_TIMEOUTS = {
@@ -654,7 +654,7 @@ def _handle_deploying(state: dict) -> dict:
 # --- Subagent phase handler (generic dispatcher) ---
 
 def _handle_subagent_phase(state: dict) -> dict:
-    """Generic handler for phases that use subagents (WORKING, REVIEWING, REVISING, MONITORING, DIAGNOSING).
+    """Generic handler for phases that use subagents (WORKING, FIXING, DIAGNOSING, DISCOVERING).
 
     Logic:
     1. Always check phase_result.json first (subagent may have finished)

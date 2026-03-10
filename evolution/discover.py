@@ -36,6 +36,15 @@ MODULES_TO_AUDIT = [
     "bot/resolver.py",
     "bot/redeemer.py",
     "bot/threshold_monitor.py",
+    "bot/deep_scanner.py",
+    "bot/llm.py",
+    "bot/research.py",
+    "bot/orderbook.py",
+    "bot/crypto_feed.py",
+    "evolution/conductor.py",
+    "evolution/discover_fast.py",
+    "evolution/deploy.py",
+    "evolution/performance.py",
 ]
 
 

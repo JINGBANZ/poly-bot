@@ -93,7 +93,9 @@ def analyze_trades(lookback_hours: int = 168) -> dict:
 def compare_baseline() -> Optional[dict]:
     """Compare current metrics against the performance baseline.
 
-    Returns comparison dict with 'degraded' flag, or None if no baseline.
+    Returns comparison dict with 'degraded' flag, or None if no baseline
+    or insufficient data. Requires at least 10 trades in BOTH baseline
+    and current window to avoid noisy comparisons with tiny samples.
     """
     try:
         if not BASELINE_FILE.exists():
@@ -102,9 +104,13 @@ def compare_baseline() -> Optional[dict]:
     except (json.JSONDecodeError, IOError):
         return None
 
+    # Need meaningful sample in baseline too
+    if baseline.get("total_trades", 0) < 10:
+        return None  # Baseline itself is too thin to compare against
+
     current = analyze_trades()
-    if current.get("total_trades", 0) < 5:
-        return None  # Not enough data to compare
+    if current.get("total_trades", 0) < 10:
+        return None  # Not enough recent data to compare
 
     b_win = baseline.get("win_rate", 0)
     c_win = current.get("win_rate", 0)
