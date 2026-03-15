@@ -556,8 +556,11 @@ def run_cycle(dry_run=False) -> dict:
             titles = [p.title for p in portfolio.positions]
             findings = scan_news_for_positions(titles)
             for f in findings:
-                tweets_summary = " | ".join(t["text"][:80] for t in f["notable_tweets"][:2])
-                log(f"  📰 {f['position'][:30]}: {tweets_summary}")
+                try:
+                    tweets_summary = " | ".join(t["text"][:80] for t in f.get("notable_tweets", [])[:2])
+                    log(f"  📰 {f['position'][:30]}: {tweets_summary}")
+                except Exception as e:
+                    log(f"  ⚠️ News finding error for {f.get('position', 'unknown')}: {e}")
         except Exception as e:
             log(f"  ⚠️ News scan: {e}")
 
