@@ -60,7 +60,8 @@ def get_usdc_balance() -> float:
         result = client.get_balance_allowance(params)
         balance_raw = int(result.get("balance", 0))
         return balance_raw / 1e6  # USDC has 6 decimals
-    except Exception:
+    except Exception as e:
+        log(f"⚠️ get_usdc_balance failed: {e}")
         return 0.0
 
 
