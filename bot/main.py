@@ -17,15 +17,16 @@ Usage:
 import argparse
 import json
 import os
+import re
 import signal
 import time
 import sys
 from datetime import datetime, timezone
 
 from . import config
-from .api import get_positions
+from .api import get_positions, get_book, best_ask, best_bid
 from .portfolio import Portfolio
-from .guardrails import check_position
+from .guardrails import check_position, validate_entry
 from .resolver import check_resolution
 from .alerts import write_alert
 from .logger import log
@@ -33,6 +34,7 @@ from .execution import (log_trade, get_usdc_balance, check_circuit_breakers,
                         load_open_orders, save_open_orders, track_order,
                         remove_order, get_stale_orders, order_succeeded,
                         execute_buy, execute_sell)
+from .orderbook import analyze_orderbook, suggest_limit_price
 
 running = True
 
@@ -69,7 +71,6 @@ def _try_limit_sell(pos, book: dict, reason: str = ""):
     Only places one order per position (checks tracked orders).
     """
     from .api import place_limit_sell
-    from .orderbook import suggest_limit_price
 
     # Check if we already have an open order for this token
     tracked = load_open_orders()
@@ -100,7 +101,7 @@ def _try_limit_sell(pos, book: dict, reason: str = ""):
 
 def manage_open_orders(dry_run=False):
     """Check open limit orders: cancel stale ones, detect fills."""
-    from .api import get_open_orders, cancel_order
+    from .api import get_open_orders, cancel_order  # not used elsewhere
 
     # 1. Cancel stale orders (>24h)
     stale = get_stale_orders(max_age_hours=config.STALE_ORDER_HOURS)
@@ -149,13 +150,6 @@ def _process_trade_request(req: dict, mark_processed):
     through the same checks as the bot's own trades: orderbook, stale price,
     85¢ ceiling, balance, volume minimum.
     """
-    import json as _json
-    from .api import get_book, best_ask, get_positions
-    from .orderbook import analyze_orderbook
-    from .guardrails import validate_entry
-    from .execution import execute_buy, get_usdc_balance
-    from .alerts import write_alert
-
     slug = req["market_slug"]
     side = req["side"]
     amount = req["amount_usd"]
@@ -187,7 +181,7 @@ def _process_trade_request(req: dict, mark_processed):
     vol24 = float(market.get("volume24hr", 0) or 0)
 
     # Entry validation (volume, value zone)
-    prices = _json.loads(market.get("outcomePrices", "[]"))
+    prices = json.loads(market.get("outcomePrices", "[]"))
     gamma_price = float(prices[0]) if side == "YES" and prices else (1 - float(prices[0])) if prices else 0.5
     valid, msg = validate_entry(gamma_price, vol24)
     if not valid:
@@ -198,7 +192,7 @@ def _process_trade_request(req: dict, mark_processed):
     # Get token ID
     clob_ids = market.get("clobTokenIds", "[]")
     if isinstance(clob_ids, str):
-        clob_ids = _json.loads(clob_ids)
+        clob_ids = json.loads(clob_ids)
     token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
     if not token_id:
         mark_processed(req["id"], "rejected", "No token ID found")
@@ -252,6 +246,82 @@ def _process_trade_request(req: dict, mark_processed):
     else:
         mark_processed(req["id"], "rejected", f"Execution failed: {result}")
         log(f"  ❌ Trade request execution failed: {result}")
+
+
+def _parse_clob_token_ids(market: dict, side: str) -> str:
+    """Extract the correct CLOB token ID for a market and side.
+
+    Returns token_id string or empty string if not found.
+    """
+    clob_ids = market.get("clobTokenIds", "[]")
+    if isinstance(clob_ids, str):
+        try:
+            clob_ids = json.loads(clob_ids)
+        except (json.JSONDecodeError, ValueError):
+            return ""
+    if side == "YES" and len(clob_ids) > 0:
+        return clob_ids[0]
+    if len(clob_ids) > 1:
+        return clob_ids[1]
+    return ""
+
+
+def _execute_scanned_buy(
+    market: dict, side: str, entry_price: float, thesis: str,
+    buy_amount: float, reason: str, dry_run: bool, label: str = "",
+) -> bool:
+    """Shared buy-execution pipeline for market scan and deep value scan.
+
+    Performs: guardrails → orderbook check → stale-price guard → execute.
+    Returns True if the trade was executed (or dry-run logged).
+    """
+    vol24 = float(market.get("volume24hr", 0) or 0)
+    valid, msg = validate_entry(entry_price, vol24)
+    if not valid:
+        log(f"  🛑 {label}Guardrail: {msg}")
+        return False
+
+    usdc_balance = get_usdc_balance()
+    buy_amount = min(buy_amount, usdc_balance)
+    if buy_amount < 1.0:
+        log(f"  🛑 {label}Insufficient balance: ${usdc_balance:.2f}")
+        return False
+
+    token_id = _parse_clob_token_ids(market, side)
+    if not token_id:
+        log(f"  🛑 {label}No token ID for {side}")
+        return False
+
+    book = get_book(token_id)
+    ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
+    if not ob_analysis["tradeable"]:
+        log(f"  🛑 {label}Orderbook reject: {ob_analysis['reject_reason']}")
+        return False
+
+    ask_price, ask_depth = best_ask(book)
+    if ask_depth < buy_amount:
+        log(f"  🛑 {label}Low ask depth: ${ask_depth:.2f}")
+        return False
+
+    # STALE PRICE GUARD: Abort if live ask is >2x the Gamma price
+    if ask_price > entry_price * 2.0 and ask_price > 0.50:
+        log(f"  🛑 STALE PRICE ({label.strip()}): Gamma={entry_price:.2f} but live ask={ask_price:.2f}. Aborting.")
+        write_alert(
+            f"⚠️ STALE PRICE: {market.get('question', '?')[:60]}\n"
+            f"Gamma: {entry_price:.0%} → Live: {ask_price:.0%}. Aborted."
+        )
+        return False
+
+    if not dry_run:
+        execute_buy(
+            token_id, buy_amount, market.get("question", ""),
+            reason=reason, thesis=thesis, entry_price=ask_price,
+            end_date=market.get("end_date", ""),
+        )
+    else:
+        log(f"  [DRY-RUN] Would buy ${buy_amount:.2f} of {market.get('question', '')[:50]}")
+
+    return True
 
 
 def run_cycle(dry_run=False) -> dict:
@@ -364,7 +434,6 @@ def run_cycle(dry_run=False) -> dict:
 
         if gr.action.startswith("SELL"):
             # Check liquidity
-            from .api import get_book, best_bid
             from .illiquid_tracker import (
                 record_failed_sl, should_escalate, mark_escalated,
                 is_escalated, get_escalation_action, reset_escalation,
@@ -478,7 +547,7 @@ def run_cycle(dry_run=False) -> dict:
         if verbose:
             log(f"  ⚠️ Redeemer: {e}")
 
-    # 2b. Government feed monitoring (every cycle — feeds update infrequently)
+    # 2c. Government feed monitoring (every cycle — feeds update infrequently)
     try:
         from .gov_monitor import check_gov_feeds, match_to_markets
         gov_announcements = check_gov_feeds()
@@ -505,18 +574,16 @@ def run_cycle(dry_run=False) -> dict:
     except Exception as e:
         log(f"  ⚠️ Gov monitor: {e}")
 
-    # 2b. Whale detection — check for large orders moving prices
+    # 2d. Whale detection — check for large orders moving prices
     try:
         from .whale_monitor import run_whale_check, get_watched_markets_from_positions
         watched = get_watched_markets_from_positions(portfolio.positions)
         whale_signals = run_whale_check(watched, dry_run=dry_run)
         for ws in whale_signals:
-            from .alerts import write_alert as _write_alert
-            _write_alert(f"🐋 WHALE: {ws['title'][:50]} — {ws['direction']} {ws['abs_move']*100:.0f}¢, {ws['side']}")
+            write_alert(f"🐋 WHALE: {ws['title'][:50]} — {ws['direction']} {ws['abs_move']*100:.0f}¢, {ws['side']}")
 
             if not dry_run:
                 # Fast-path: guardrails → execution
-                from .guardrails import validate_entry
                 # Use a relaxed volume check — we already hold this position
                 valid, msg = True, ""
                 spread_pct = ws.get("spread", 0) / ws["entry_price"] if ws["entry_price"] > 0 else 1
@@ -537,7 +604,7 @@ def run_cycle(dry_run=False) -> dict:
     except Exception as e:
         log(f"  ⚠️ Whale monitor: {e}")
 
-    # 2b. Earnings release scraper — check EVERY cycle for speed
+    # 2e. Earnings release scraper — check EVERY cycle for speed
     try:
         from .earnings_scraper import get_watched_tickers, process_earnings_for_execution, execute_earnings_signal
         watched = get_watched_tickers()
@@ -597,7 +664,6 @@ def run_cycle(dry_run=False) -> dict:
                 log(f"  🧠 [{pos.title[:25]}]: {analysis[:120]}")
 
                 if analysis.strip().lstrip("*").startswith("SELL"):
-                    from .api import get_book, best_bid
                     book = get_book(pos.token_id)
                     bid_price, bid_depth = best_bid(book)
 
@@ -660,7 +726,7 @@ def run_cycle(dry_run=False) -> dict:
                 try:
                     prices = json.loads(m.get("outcomePrices", "[]"))
                     yes_price = float(prices[0]) if prices else 0.5
-                except:
+                except (json.JSONDecodeError, ValueError, IndexError):
                     yes_price = 0.5
                 cheap = min(yes_price, 1 - yes_price)
                 if config.VALUE_ZONE_MIN <= cheap <= config.VALUE_ZONE_MAX:
@@ -684,8 +750,7 @@ def run_cycle(dry_run=False) -> dict:
                     # Re-number lines from batch-local indices to global indices
                     for raw_line in batch_analysis.split("\n"):
                         # Adjust numbering: replace leading number with global index
-                        import re as _re
-                        num_match = _re.match(r'^[\s*]*(\d+)\.', raw_line)
+                        num_match = re.match(r'^[\s*]*(\d+)\.', raw_line)
                         if num_match:
                             local_idx = int(num_match.group(1))
                             global_idx = local_idx + offset
@@ -715,7 +780,6 @@ def run_cycle(dry_run=False) -> dict:
                         # Require numeric market index prefix before keyword (fix #25)
                         # Matches lines like: "6. TRADE — reason" or "**3.** LEAN: reason"
                         # Ignores summary/commentary lines that mention keywords without a number prefix
-                        import re
                         scan_match = re.match(
                             r'^\s*\**\s*(\d+)\.?\s*\**\s*(TRADE|LEAN|RESEARCH)\s*[—\-:]+\s*(.*)',
                             line, re.IGNORECASE
@@ -810,67 +874,14 @@ def run_cycle(dry_run=False) -> dict:
 
                             log(f"  📜 Thesis: {thesis[:150]}")
 
-                            # Guardrails
-                            vol24 = float(market.get("volume24hr", 0) or 0)
-                            from .guardrails import validate_entry
-                            valid, msg = validate_entry(entry_price, vol24)
-                            if not valid:
-                                log(f"  🛑 Guardrail: {msg}")
-                                continue
-
-                            # STALE PRICE GUARD: Re-fetch live ask before committing
-                            # Gamma API outcomePrices can be hours stale. The live
-                            # orderbook is the ONLY source of truth for current price.
-                            # Learned from Khamenei buy at 99.7¢ when Gamma said 15¢.
-
-                            usdc_balance = get_usdc_balance()
-                            buy_amount = min(config.MAX_POSITION_USD, usdc_balance)
-                            if buy_amount < 1.0:
-                                log(f"  🛑 Insufficient balance: ${usdc_balance:.2f}")
-                                continue
-
-                            # Check ask liquidity
-                            from .api import get_book, best_ask
-                            clob_ids = market.get("clobTokenIds", "[]")
-                            if isinstance(clob_ids, str):
-                                import json as _json
-                                try:
-                                    clob_ids = _json.loads(clob_ids)
-                                except Exception:
-                                    clob_ids = []
-                            token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
-                            if not token_id:
-                                continue
-
-                            book = get_book(token_id)
-
-                            # Orderbook analysis
-                            from .orderbook import analyze_orderbook, suggest_limit_price
-                            ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
-                            if not ob_analysis["tradeable"]:
-                                log(f"  🛑 Orderbook reject: {ob_analysis['reject_reason']}")
-                                continue
-
-                            ask_price, ask_depth = best_ask(book)
-                            if ask_depth < buy_amount:
-                                log(f"  🛑 Low ask depth: ${ask_depth:.2f}")
-                                continue
-
-                            # STALE PRICE GUARD: Abort if live ask is >2x the Gamma price
-                            # Khamenei lesson: Gamma said 15¢, live ask was 99.7¢
-                            if ask_price > entry_price * 2.0 and ask_price > 0.50:
-                                log(f"  🛑 STALE PRICE: Gamma={entry_price:.2f} but live ask={ask_price:.2f}. Aborting — price moved.")
-                                write_alert(f"⚠️ STALE PRICE detected: {market.get('question','?')[:60]}\nGamma: {entry_price:.0%} → Live: {ask_price:.0%}. Trade aborted.")
-                                continue
-
-                            if not dry_run:
-                                result = execute_buy(token_id, buy_amount, market.get('question', ''),
-                                                    reason="LLM_TRADE", thesis=thesis, entry_price=ask_price,
-                                                    end_date=market.get("end_date", ""))
-                            else:
-                                log(f"  [DRY-RUN] Would buy ${buy_amount:.2f} of {market.get('question')[:50]}")
-
-                            write_alert(f"🧠 LLM opportunity:\n{line.strip()}")
+                            # Execute through shared buy pipeline
+                            traded = _execute_scanned_buy(
+                                market, side, entry_price, thesis,
+                                buy_amount=config.MAX_POSITION_USD,
+                                reason="LLM_TRADE", dry_run=dry_run,
+                            )
+                            if traded:
+                                write_alert(f"🧠 LLM opportunity:\n{line.strip()}")
 
                         except Exception as te:
                             log(f"  ⚠️ Trade processing error: {te}")
@@ -913,68 +924,22 @@ def run_cycle(dry_run=False) -> dict:
                         log(f"  💎✅ Deep value TRADE: {research_result['thesis'][:150]}")
                         write_alert(f"💎 DEEP VALUE OPPORTUNITY:\n{summary}\n\nResearch: {research_result['thesis'][:300]}")
 
-                        # ── Execute the buy ──
-                        if not dry_run:
-                            thesis = research_result.get("thesis", "")
-                            if not thesis:
-                                from . import llm as _llm
-                                thesis = _llm.generate_thesis(m.get('question'), side, price, research_result.get("research_summary", ""))
-                                if not thesis or thesis.startswith("NO_THESIS"):
-                                    log(f"  🛑 Deep value: no valid thesis")
-                                    continue
-
-                            # Guardrails
-                            vol24 = float(m.get("volume24hr", 0) or 0)
-                            from .guardrails import validate_entry
-                            valid, msg = validate_entry(price, vol24)
-                            if not valid:
-                                log(f"  🛑 Deep value guardrail: {msg}")
+                        # Generate thesis if missing
+                        thesis = research_result.get("thesis", "")
+                        if not thesis:
+                            from . import llm as _llm
+                            thesis = _llm.generate_thesis(m.get('question'), side, price, research_result.get("research_summary", ""))
+                            if not thesis or thesis.startswith("NO_THESIS"):
+                                log(f"  🛑 Deep value: no valid thesis")
                                 continue
 
-                            usdc_balance = get_usdc_balance()
-                            buy_amount = min(config.MAX_POSITION_USD, usdc_balance)
-                            if buy_amount < 1.0:
-                                log(f"  🛑 Deep value: insufficient balance ${usdc_balance:.2f}")
-                                continue
-
-                            # Get token ID for the correct side
-                            clob_ids = m.get("clobTokenIds", "[]")
-                            if isinstance(clob_ids, str):
-                                import json as _json
-                                try:
-                                    clob_ids = _json.loads(clob_ids)
-                                except Exception:
-                                    clob_ids = []
-                            token_id = clob_ids[0] if side == "YES" and len(clob_ids) > 0 else (clob_ids[1] if len(clob_ids) > 1 else "")
-                            if not token_id:
-                                log(f"  🛑 Deep value: no token ID for {side}")
-                                continue
-
-                            # Check orderbook liquidity
-                            from .api import get_book, best_ask
-                            from .orderbook import analyze_orderbook
-                            book = get_book(token_id)
-                            ob_analysis = analyze_orderbook(book, order_size_usd=buy_amount, side="BUY")
-                            if not ob_analysis["tradeable"]:
-                                log(f"  🛑 Deep value orderbook reject: {ob_analysis['reject_reason']}")
-                                continue
-
-                            ask_price, ask_depth = best_ask(book)
-                            if ask_depth < buy_amount:
-                                log(f"  🛑 Deep value: low ask depth ${ask_depth:.2f}")
-                                continue
-
-                            # STALE PRICE GUARD (deep value path)
-                            if ask_price > price * 2.0 and ask_price > 0.50:
-                                log(f"  🛑 STALE PRICE (deep): Gamma={price:.2f} but live ask={ask_price:.2f}. Aborting.")
-                                write_alert(f"⚠️ STALE PRICE: {m.get('question','?')[:60]}\nGamma: {price:.0%} → Live: {ask_price:.0%}. Aborted.")
-                                continue
-
-                            result = execute_buy(token_id, buy_amount, m.get('question', ''),
-                                                reason="DEEP_VALUE_TRADE", thesis=thesis, entry_price=ask_price,
-                                                end_date=m.get("end_date", ""))
-                        else:
-                            log(f"  [DRY-RUN] Would buy deep value: {m.get('question')[:50]}")
+                        # Execute through shared buy pipeline
+                        _execute_scanned_buy(
+                            m, side, price, thesis,
+                            buy_amount=config.MAX_POSITION_USD,
+                            reason="DEEP_VALUE_TRADE", dry_run=dry_run,
+                            label="Deep value: ",
+                        )
 
                     elif verdict == "PASS":
                         log(f"  💎❌ Deep value PASS: {research_result['reason'][:100]}")
@@ -997,12 +962,12 @@ def run_cycle(dry_run=False) -> dict:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "results": results,
             "positions": len(portfolio.positions),
-            "duration_sec": cycle_end - _cycle_start if '_cycle_start' in dir() else 0,
+            "duration_sec": cycle_end - _cycle_start,
             "bot_start_time": getattr(main, '_start_time', None),
         }
         try:
             cycle_data["usdc_balance"] = get_usdc_balance()
-        except:
+        except Exception:
             pass
         os.makedirs(config.STATE_DIR, exist_ok=True)
         with open(os.path.join(config.STATE_DIR, "last_cycle.json"), "w") as f:
