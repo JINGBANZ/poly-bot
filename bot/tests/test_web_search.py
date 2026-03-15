@@ -44,18 +44,15 @@ class TestSearchRetry:
         assert results[0]["title"] == "OK"
         assert inst.text.call_count == 2
 
-    def test_retries_on_empty_results(self):
+    def test_empty_results_returns_immediately(self):
+        """Empty DDG results are normal for niche queries — no retry needed."""
         mock_ddgs = MagicMock()
         inst = mock_ddgs.return_value
-        inst.text.side_effect = [
-            [],  # empty first try
-            [{"title": "Found", "href": "http://found.com", "body": "found"}],
-        ]
+        inst.text.return_value = []
         with patch.object(ws, "DDGS", mock_ddgs):
             results = ws.search("test query")
-        assert len(results) == 1
-        assert results[0]["title"] == "Found"
-        assert inst.text.call_count == 2
+        assert results == []
+        assert inst.text.call_count == 1  # No retry on empty results
 
     def test_gives_up_after_max_retries(self):
         mock_ddgs = MagicMock()
