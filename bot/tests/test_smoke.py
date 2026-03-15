@@ -541,3 +541,45 @@ def test_threshold_cooldown_and_blacklist():
     # Cooldown constants
     assert tm._REJECTION_COOLDOWN >= 6 * 3600
     assert tm._MAX_CONSECUTIVE_REJECTIONS == 3
+
+
+def test_dust_position_filter():
+    """Dust positions (value AND cost < MIN_REVIEW_VALUE) are excluded from review."""
+    from bot.main import _is_dust_position, MIN_REVIEW_VALUE
+
+    class FakePos:
+        def __init__(self, size, entry, current):
+            self.size = size
+            self.entry = entry
+            self.current = current
+
+        @property
+        def value(self):
+            return self.size * self.current
+
+        @property
+        def cost(self):
+            return self.size * self.entry
+
+    # Dust: tiny size, near-zero value and cost
+    dust = FakePos(size=0.006, entry=0.50, current=0.50)
+    assert dust.value < MIN_REVIEW_VALUE
+    assert dust.cost < MIN_REVIEW_VALUE
+    assert _is_dust_position(dust) is True
+
+    # Not dust: meaningful value
+    normal = FakePos(size=10.0, entry=0.50, current=0.60)
+    assert normal.value >= MIN_REVIEW_VALUE
+    assert _is_dust_position(normal) is False
+
+    # Edge case: low value but high cost (should NOT be skipped)
+    high_cost = FakePos(size=1.0, entry=0.10, current=0.01)
+    assert high_cost.value < MIN_REVIEW_VALUE
+    assert high_cost.cost >= MIN_REVIEW_VALUE
+    assert _is_dust_position(high_cost) is False
+
+    # Edge case: low cost but high value (should NOT be skipped)
+    high_value = FakePos(size=1.0, entry=0.01, current=0.10)
+    assert high_value.cost < MIN_REVIEW_VALUE
+    assert high_value.value >= MIN_REVIEW_VALUE
+    assert _is_dust_position(high_value) is False

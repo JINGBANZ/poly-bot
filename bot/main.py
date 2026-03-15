@@ -46,6 +46,14 @@ _DEDUP_INTERVAL = 1800  # re-log same state only every 30 min
 _last_analyzed_price = {}  # token_id -> float (price when last analyzed)
 _LLM_PRICE_CHANGE_THRESHOLD = 0.05  # Only re-analyze if price moved >5%
 
+# Dust position filter — skip expensive reviews for near-worthless positions
+MIN_REVIEW_VALUE = 0.05  # Skip LLM/news for positions worth less than 5 cents
+
+
+def _is_dust_position(pos) -> bool:
+    """Return True if position value AND cost are both below MIN_REVIEW_VALUE."""
+    return pos.value < MIN_REVIEW_VALUE and pos.cost < MIN_REVIEW_VALUE
+
 def _state_changed(token_id: str, action: str, detail: str) -> bool:
     """Return True if this is new or changed since last log."""
     now = time.time()
@@ -402,6 +410,11 @@ def run_cycle(dry_run=False) -> dict:
         log(portfolio.summary())
 
     # 2. Check each position
+    dust_positions = [p for p in portfolio.positions if _is_dust_position(p)]
+    if dust_positions and verbose:
+        dust_names = ", ".join(p.title[:25] for p in dust_positions)
+        log(f"  🧹 Skipping {len(dust_positions)} dust positions (< ${MIN_REVIEW_VALUE}): {dust_names}")
+
     results = {}
     for pos in portfolio.positions:
         # Resolution check
@@ -426,6 +439,10 @@ def run_cycle(dry_run=False) -> dict:
                 log(f"  ⚠️ Post-mortem failed: {e}")
 
             resolved_slugs.append(pos.slug)
+            continue
+
+        # Skip guardrails for dust positions (cheap but no point)
+        if _is_dust_position(pos):
             continue
 
         # Guardrail check
@@ -620,7 +637,7 @@ def run_cycle(dry_run=False) -> dict:
     if verbose:
         try:
             from .news import scan_news_for_positions
-            titles = [p.title for p in portfolio.positions]
+            titles = [p.title for p in portfolio.positions if not _is_dust_position(p)]
             findings = scan_news_for_positions(titles)
             for f in findings:
                 try:
@@ -636,6 +653,10 @@ def run_cycle(dry_run=False) -> dict:
         try:
             from . import llm
             for pos in portfolio.positions:
+                # Dust filter: skip positions worth less than MIN_REVIEW_VALUE
+                if _is_dust_position(pos):
+                    continue
+
                 # Noise reduction: skip LLM if price hasn't moved >5% since last analysis
                 last_price = _last_analyzed_price.get(pos.token_id)
                 if last_price is not None:
