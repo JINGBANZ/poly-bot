@@ -619,6 +619,9 @@ def run_cycle(dry_run=False) -> dict:
             log(f"  ⚠️ LLM analysis: {e}")
 
     # 5. LLM market scan (every 12th cycle = ~60 min)
+    # Track markets researched this cycle to avoid duplicate research in deep value scan (#39)
+    researched_this_cycle = set()
+
     if cycle_count % 12 == 1:
         try:
             from . import llm
@@ -765,6 +768,11 @@ def run_cycle(dry_run=False) -> dict:
                                 scan_reason=reason
                             )
 
+                            # Track this market as researched for dedup with deep value scan (#39)
+                            market_dedup_key = market.get("conditionId") or market.get("question", "")
+                            if market_dedup_key:
+                                researched_this_cycle.add(market_dedup_key)
+
                             verdict = research_result["verdict"]
 
                             # RESEARCH markets: only proceed if research says TRADE
@@ -883,6 +891,12 @@ def run_cycle(dry_run=False) -> dict:
                 side = c["side"]
                 price = c["price"]
                 catalyst = c["catalyst"]
+
+                # Skip markets already researched by regular scan this cycle (#39)
+                deep_dedup_key = m.get("conditionId") or m.get("question", "")
+                if deep_dedup_key and deep_dedup_key in researched_this_cycle:
+                    log(f"  💎 Deep value skipped (already researched this cycle): {m.get('question', '?')[:60]}")
+                    continue
 
                 log(f"  💎 Deep value research: {m.get('question', '?')[:60]} ({side} @ {price:.0%})")
 
