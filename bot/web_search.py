@@ -53,8 +53,9 @@ def search(query: str, num_results: int = 5) -> list[dict]:
                 if attempt > 0:
                     log(f"✅ DuckDuckGo search succeeded on attempt {attempt + 1}")
                 return results
-            # Empty results — treat as a failure and retry
-            last_error = "No results found"
+            # Empty results from DDG are normal for niche queries — no retry needed
+            log(f"ℹ️ DuckDuckGo search: no results for query: {query[:80]}")
+            return []
         except Exception as e:
             last_error = str(e)
 
