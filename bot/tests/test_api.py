@@ -4,6 +4,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+import requests
 from unittest.mock import patch, MagicMock
 
 
@@ -200,3 +201,51 @@ def test_get_positions_error_returns_empty():
     from bot.api import get_positions
     with patch("bot.api.requests.get", side_effect=Exception("fail")):
         assert get_positions() == []
+
+
+# === Client caching ===
+
+def test_clob_client_is_cached():
+    """get_clob_client should return the same instance on repeated calls."""
+    import bot.api as api
+    api._clob_client = None  # reset cache
+    mock_client = MagicMock()
+    with patch("bot.api._load_env"), \
+         patch.dict(os.environ, {"POLYMARKET_PRIVATE_KEY": "0xtest"}), \
+         patch("py_clob_client.client.ClobClient", return_value=mock_client):
+        c1 = api.get_clob_client()
+        c2 = api.get_clob_client()
+    assert c1 is c2
+    api._clob_client = None  # cleanup
+
+
+# === best_bid / best_ask malformed data ===
+
+def test_best_bid_malformed_data():
+    """best_bid should return (0.0, 0.0) on malformed book entries."""
+    from bot.api import best_bid
+    book = {"bids": [{"price": "not_a_number", "size": "100"}]}
+    price, depth = best_bid(book)
+    assert price == 0.0
+    assert depth == 0.0
+
+
+def test_best_ask_malformed_data():
+    """best_ask should return (1.0, 0.0) on malformed book entries."""
+    from bot.api import best_ask
+    book = {"asks": [{"size": "100"}]}  # missing "price" key
+    price, depth = best_ask(book)
+    assert price == 1.0
+    assert depth == 0.0
+
+
+# === get_book raise_for_status ===
+
+def test_get_book_http_error_returns_empty():
+    """get_book returns empty book on HTTP error status codes."""
+    from bot.api import get_book
+    fake_resp = MagicMock()
+    fake_resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+    with patch("bot.api.requests.get", return_value=fake_resp):
+        book = get_book("0xtoken")
+    assert book == {"bids": [], "asks": []}
