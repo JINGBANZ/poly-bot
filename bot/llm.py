@@ -18,23 +18,48 @@ from .logger import log
 
 _TOKEN_PATH = "/home/ubuntu/.openclaw/.bot-anthropic-token"
 
-def _get_token() -> str:
-    """Read OAuth token from file or env."""
+# Minimum model tier we consider acceptable for market analysis.
+# Anything below this triggers a warning alert.
+_HAIKU_MODELS = {"claude-3-haiku-20240307"}
+
+
+def _get_auth() -> tuple[str, str]:
+    """Return (token, auth_type).
+
+    Checks ANTHROPIC_API_KEY first (standard API key → x-api-key header),
+    then ANTHROPIC_OAUTH_TOKEN / token file (OAuth → Bearer header).
+    auth_type is 'api_key' or 'bearer'.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return api_key, "api_key"
     token = os.environ.get("ANTHROPIC_OAUTH_TOKEN", "")
     if token:
-        return token
+        return token, "bearer"
     try:
         with open(_TOKEN_PATH) as f:
-            return f.read().strip()
+            tok = f.read().strip()
+            # Standard API keys start with sk-ant-api, OAT tokens with sk-ant-oat
+            if tok.startswith("sk-ant-api"):
+                return tok, "api_key"
+            return tok, "bearer"
     except Exception:
-        return ""
+        return "", "bearer"
 
-# Model preference order — OAuth tokens may not support all models.
-# We probe on first call and cache the working model for the process lifetime.
+
+def _get_token() -> str:
+    """Legacy helper — returns the token string."""
+    token, _ = _get_auth()
+    return token
+
+
+# Model preference order — we probe on first call and cache the working model.
+# Sonnet-class models first, haiku as last resort.
 MODEL_CANDIDATES = [
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-20250514",
-    "claude-3-haiku-20240307",
+    "claude-sonnet-4-20250514",       # Claude Sonnet 4 (latest)
+    "claude-sonnet-4-0",              # Claude Sonnet 4 (alias)
+    "claude-3-5-sonnet-20241022",     # Claude 3.5 Sonnet v2
+    "claude-3-haiku-20240307",        # Haiku fallback (weakest)
 ]
 API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
@@ -51,28 +76,33 @@ _MIN_INTERVAL = 2.0  # seconds between calls
 
 # ── Model Probing ──────────────────────────────────────────────────
 
-def _build_headers(token: str) -> dict:
+def _build_headers(token: str, auth_type: str = "bearer") -> dict:
     """Build request headers for Anthropic API."""
-    return {
-        "Authorization": f"Bearer {token}",
+    headers = {
         "anthropic-version": "2023-06-01",
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-        "user-agent": "claude-cli/2.1.2 (external, cli)",
-        "x-app": "cli",
         "content-type": "application/json",
     }
+    if auth_type == "api_key":
+        headers["x-api-key"] = token
+    else:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["anthropic-beta"] = "claude-code-20250219,oauth-2025-04-20"
+        headers["user-agent"] = "claude-cli/2.1.2 (external, cli)"
+        headers["x-app"] = "cli"
+    return headers
 
 
-def _probe_model(token: str) -> str | None:
+def _probe_model(token: str, auth_type: str = "bearer") -> str | None:
     """Probe model candidates with a minimal request to find one that works.
 
     Caches result for the process lifetime so we only probe once.
+    Emits a warning alert if only haiku-class models are available.
     """
     global _working_model, _probe_done
     if _probe_done:
         return _working_model
 
-    headers = _build_headers(token)
+    headers = _build_headers(token, auth_type)
     test_body = {
         "max_tokens": 5,
         "messages": [{"role": "user", "content": "hi"}],
@@ -86,6 +116,9 @@ def _probe_model(token: str) -> str | None:
                 log(f"ℹ️ LLM: Using model {model}")
                 _working_model = model
                 _probe_done = True
+                # Warn if we fell back to haiku
+                if model in _HAIKU_MODELS:
+                    _warn_haiku_fallback(model)
                 return _working_model
             else:
                 log(f"ℹ️ LLM: Model {model} not available (HTTP {r.status_code}), trying next")
@@ -98,6 +131,21 @@ def _probe_model(token: str) -> str | None:
     return None
 
 
+def _warn_haiku_fallback(model: str):
+    """Emit a warning alert when falling back to haiku for analysis."""
+    try:
+        from .alerts import write_alert
+        write_alert(
+            f"⚠️ LLM degraded: using {model} (haiku-class) for all market analysis. "
+            f"Sonnet-class models unavailable — trade quality may be reduced. "
+            f"Set ANTHROPIC_API_KEY env var with a key that has Sonnet access to fix.",
+            severity="warning",
+        )
+    except Exception:
+        # Don't let alert failure block LLM operation
+        log(f"⚠️ LLM: Fell back to {model} — Sonnet models unavailable. Analysis quality degraded.")
+
+
 def call(prompt: str, system: str = "", temperature: float = 0.3,
          max_tokens: int = 2048) -> str | None:
     """Call Claude with OAuth token. Returns response text or None on failure.
@@ -108,13 +156,13 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
     """
     global _last_call_ts
 
-    token = _get_token()
+    token, auth_type = _get_auth()
     if not token:
-        log("❌ LLM: No OAuth token found")
+        log("❌ LLM: No API key or OAuth token found")
         return None
 
     # Probe for a working model on first call
-    model = _probe_model(token)
+    model = _probe_model(token, auth_type)
     if not model:
         return None
 
@@ -124,7 +172,7 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
     if wait > 0:
         time.sleep(wait)
 
-    headers = _build_headers(token)
+    headers = _build_headers(token, auth_type)
 
     body = {
         "model": model,
