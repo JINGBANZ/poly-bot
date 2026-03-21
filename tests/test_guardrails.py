@@ -25,8 +25,8 @@ class TestStopLoss:
         result = check_position(pos)
         assert result.action == "SELL_SL"
 
-    def test_no_trigger_at_49pct(self):
-        pos = _make_pos(entry=0.40, current=0.204)  # -49%
+    def test_no_trigger_just_under_threshold(self):
+        pos = _make_pos(entry=0.40, current=0.264)  # -34%, just under 35% threshold
         result = check_position(pos)
         assert result.action == "HOLD"
 

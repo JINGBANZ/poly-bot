@@ -432,6 +432,7 @@ def _load_redemptions():
 def _save_redemptions(data):
     """Save redemption history atomically (write-to-temp + os.replace)."""
     os.makedirs(os.path.dirname(REDEMPTIONS_FILE), exist_ok=True)
+    tmp_path = None
     try:
         fd, tmp_path = tempfile.mkstemp(
             dir=os.path.dirname(REDEMPTIONS_FILE), suffix=".tmp", prefix="redemptions_"
@@ -441,10 +442,11 @@ def _save_redemptions(data):
         os.replace(tmp_path, REDEMPTIONS_FILE)
     except OSError:
         log("Failed to save redemptions atomically")
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
         raise
 
 

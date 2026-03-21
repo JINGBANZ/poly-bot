@@ -217,12 +217,6 @@ class TestRetryLogic:
     @patch("bot.redeemer.requests.get")
     def test_get_relay_payload_retries_on_connection_error(self, mock_get):
         mock_get.side_effect = [
-            ConnectionError("network"),
-            ConnectionError("network"),
-            MagicMock(status_code=200, json=lambda: {"address": "0x1", "nonce": 1}),
-        ]
-        # The requests module wraps ConnectionError
-        mock_get.side_effect = [
             requests.exceptions.ConnectionError("fail"),
             requests.exceptions.ConnectionError("fail"),
             MagicMock(status_code=200, json=lambda: {"address": "0x1", "nonce": 1},
@@ -294,12 +288,8 @@ class TestCheckAndRedeem:
         ]
         mock_redeem.return_value = {"success": True, "tx_hash": "0xhash"}
 
-        # Patch write_alert at module level
-        with patch("bot.redeemer.check_and_redeem.__module__", "bot.redeemer"):
-            with patch.dict("sys.modules", {}):
-                # Simpler: just patch the alerts import inside check_and_redeem
-                with patch("bot.alerts.write_alert") as mock_wa:
-                    results = redeemer.check_and_redeem()
+        with patch("bot.alerts.write_alert"):
+            results = redeemer.check_and_redeem()
 
         assert len(results) == 1
         assert results[0]["success"] is True

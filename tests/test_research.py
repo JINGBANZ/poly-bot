@@ -40,24 +40,22 @@ class TestAdverseSelection:
 
 
 class TestBraveSearch:
-    @patch("bot.research._get_brave_key", return_value="")
-    def test_no_api_key(self, mock_key):
+    @patch("bot.research._web_search", return_value=[])
+    def test_no_results(self, mock_search):
         results = brave_search("test query")
         assert results == []
+        mock_search.assert_called_once_with("test query", num_results=5)
 
-    @patch("bot.research.requests.get")
-    @patch("bot.research._get_brave_key", return_value="test-key")
-    def test_successful_search(self, mock_key, mock_get):
-        mock_get.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"web": {"results": [
-                {"title": "Result 1", "url": "https://a.com", "description": "Snippet 1"},
-                {"title": "Result 2", "url": "https://b.com", "description": "Snippet 2"},
-            ]}}
-        )
+    @patch("bot.research._web_search")
+    def test_successful_search(self, mock_search):
+        mock_search.return_value = [
+            {"title": "Result 1", "url": "https://a.com", "snippet": "Snippet 1"},
+            {"title": "Result 2", "url": "https://b.com", "snippet": "Snippet 2"},
+        ]
         results = brave_search("test", count=2)
         assert len(results) == 2
         assert results[0]["title"] == "Result 1"
+        mock_search.assert_called_once_with("test", num_results=2)
 
 
 class TestResearchOpportunity:
