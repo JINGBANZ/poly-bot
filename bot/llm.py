@@ -30,9 +30,14 @@ def _get_token() -> str:
         return ""
 
 MODEL = "claude-sonnet-4-6"
+MODEL_FALLBACK = "claude-3-haiku-20240307"
 API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
 TIMEOUT = 90
+
+# Track model availability to avoid repeated failures
+_model_blacklist: dict[str, float] = {}  # model -> blacklist_until timestamp
+_MODEL_BLACKLIST_SECS = 3600  # retry blacklisted model after 1 hour
 
 # Rate limiting
 _last_call_ts = 0.0
@@ -41,9 +46,25 @@ _MIN_INTERVAL = 2.0  # seconds between calls
 
 # ── Core LLM Call ───────────────────────────────────────────────────
 
+def _pick_model() -> list[str]:
+    """Return ordered list of models to try, skipping blacklisted ones."""
+    now = time.time()
+    models = []
+    for m in [MODEL, MODEL_FALLBACK]:
+        until = _model_blacklist.get(m, 0)
+        if now >= until:
+            models.append(m)
+    # If all blacklisted (expired), try all anyway
+    return models if models else [MODEL, MODEL_FALLBACK]
+
+
 def call(prompt: str, system: str = "", temperature: float = 0.3,
          max_tokens: int = 2048) -> str | None:
-    """Call Claude with OAuth token. Returns response text or None on failure."""
+    """Call Claude with OAuth token. Returns response text or None on failure.
+
+    Tries MODEL first, falls back to MODEL_FALLBACK on 400/404 errors.
+    Blacklists failing models for 1 hour to avoid repeated failures.
+    """
     global _last_call_ts
 
     token = _get_token()
@@ -66,41 +87,57 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
         "content-type": "application/json",
     }
 
-    body = {
-        "model": MODEL,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    if system:
-        body["system"] = system
+    models_to_try = _pick_model()
 
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            _last_call_ts = time.time()
-            r = requests.post(API_URL, json=body, headers=headers, timeout=TIMEOUT)
+    for model in models_to_try:
+        body = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            body["system"] = system
 
-            if r.status_code == 429:
-                log(f"⚠️ LLM: Rate limited, waiting 60s")
-                time.sleep(60)
-                continue
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                _last_call_ts = time.time()
+                r = requests.post(API_URL, json=body, headers=headers, timeout=TIMEOUT)
 
-            if r.status_code == 401:
-                log(f"❌ LLM: Auth failed — token may be expired")
-                return None
+                if r.status_code == 429:
+                    log(f"⚠️ LLM: Rate limited, waiting 60s")
+                    time.sleep(60)
+                    continue
 
-            if r.status_code != 200:
-                log(f"❌ LLM: HTTP {r.status_code}: {r.text[:200]}")
-                return None
+                if r.status_code == 401:
+                    log(f"❌ LLM: Auth failed — token may be expired")
+                    return None
 
-            data = r.json()
-            text = data["content"][0]["text"]
-            return text.strip()
+                if r.status_code in (400, 404):
+                    # Model not available — blacklist and try fallback
+                    _model_blacklist[model] = time.time() + _MODEL_BLACKLIST_SECS
+                    log(f"⚠️ LLM: Model {model} returned HTTP {r.status_code}, blacklisting for 1h")
+                    break  # break retry loop, try next model
 
-        except Exception as e:
-            log(f"❌ LLM: Error (attempt {attempt+1}): {e}")
-            if attempt < MAX_RETRIES:
-                time.sleep(2 ** attempt)
+                if r.status_code != 200:
+                    log(f"❌ LLM: HTTP {r.status_code}: {r.text[:200]}")
+                    return None
+
+                data = r.json()
+                text = data["content"][0]["text"]
+                if model != MODEL:
+                    log(f"ℹ️ LLM: Using fallback model {model}")
+                return text.strip()
+
+            except Exception as e:
+                log(f"❌ LLM: Error (attempt {attempt+1}): {e}")
+                if attempt < MAX_RETRIES:
+                    time.sleep(2 ** attempt)
+        else:
+            # Retry loop exhausted without break — move to next model
+            continue
+        # break from retry loop hit — try next model
+        continue
 
     return None
 
