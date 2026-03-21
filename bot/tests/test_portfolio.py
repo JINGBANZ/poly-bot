@@ -123,3 +123,50 @@ def test_portfolio_multiple_positions_pnl():
     assert pf.total_cost == 8.0
     assert pf.total_value == 9.0
     assert pf.total_pnl == 1.0
+
+
+# === _safe_float and robustness ===
+
+def test_safe_float_invalid_string():
+    """_safe_float returns default for non-numeric strings."""
+    from bot.portfolio import _safe_float
+    assert _safe_float("abc") == 0.0
+    assert _safe_float(None) == 0.0
+    assert _safe_float("", 1.0) == 1.0
+
+
+def test_position_non_numeric_fields():
+    """Position gracefully handles non-numeric size/price strings."""
+    p = Position({"size": "bad", "avgPrice": "NaN-ish", "curPrice": None, "asset": "0x1"})
+    assert p.size == 0.0
+    assert p.entry == 0.0
+    assert p.current == 0.0
+
+
+def test_portfolio_active_filters_zero_size():
+    """active() excludes positions with size 0."""
+    raw = [
+        {"title": "A", "size": "10", "avgPrice": "0.50", "curPrice": "0.60", "asset": "0x1"},
+        {"title": "B", "size": "0", "avgPrice": "0.30", "curPrice": "0.25", "asset": "0x2"},
+    ]
+    pf = Portfolio.from_api(raw)
+    assert len(pf.positions) == 2
+    assert len(pf.active()) == 1
+    assert pf.active()[0].title == "A"
+
+
+def test_portfolio_save_atomic(tmp_path, monkeypatch):
+    """save() writes atomically via temp file + rename."""
+    import bot.config as cfg
+    monkeypatch.setattr(cfg, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(cfg, "POS_FILE", str(tmp_path / "positions.json"))
+
+    raw = [{"title": "X", "size": "5", "avgPrice": "0.20", "curPrice": "0.30", "asset": "0x1"}]
+    pf = Portfolio.from_api(raw)
+    pf.save()
+
+    import json
+    data = json.loads((tmp_path / "positions.json").read_text())
+    assert data["summary"]["count"] == 1
+    assert len(data["positions"]) == 1
+    assert data["positions"][0]["title"] == "X"

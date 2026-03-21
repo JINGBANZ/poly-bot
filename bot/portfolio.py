@@ -1,9 +1,22 @@
 """Portfolio module — position tracking, P&L, and state management."""
 
 import json
+import logging
 import os
+import tempfile
 from datetime import datetime, timezone
 from . import config
+
+log = logging.getLogger(__name__)
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """Convert value to float, returning *default* on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
 
 class Position:
     """A single position with computed fields."""
@@ -12,9 +25,9 @@ class Position:
         self.title = (raw.get("title") or raw.get("slug", "unknown"))[:50]
         self.slug = raw.get("slug", "")
         self.outcome = raw.get("outcome", "Yes")
-        self.size = float(raw.get("size", 0))
-        self.entry = float(raw.get("avgPrice", 0))
-        self.current = float(raw.get("curPrice", 0))
+        self.size = _safe_float(raw.get("size", 0))
+        self.entry = _safe_float(raw.get("avgPrice", 0))
+        self.current = _safe_float(raw.get("curPrice", 0))
         self.token_id = raw.get("asset", "")
         self.condition_id = raw.get("conditionId", "")
         self.end_date = raw.get("endDate", "")
@@ -81,8 +94,16 @@ class Portfolio:
             lines.append(f"  {p}")
         return "\n".join(lines)
 
+    def active(self) -> list["Position"]:
+        """Return positions with size > 0 (filters out stale zero-size entries)."""
+        return [p for p in self.positions if p.size > 0]
+
     def save(self):
-        """Save current state to positions.json."""
+        """Save current state to positions.json atomically.
+
+        Writes to a temporary file first, then renames.  This prevents
+        half-written / corrupted state if the process is killed mid-write.
+        """
         os.makedirs(config.STATE_DIR, exist_ok=True)
         state = {
             "updated": datetime.now(timezone.utc).isoformat(),
@@ -108,5 +129,18 @@ class Portfolio:
                 "end_date": p.end_date,
             } for p in self.positions],
         }
-        with open(config.POS_FILE, "w") as f:
-            json.dump(state, f, indent=2)
+        try:
+            fd, tmp_path = tempfile.mkstemp(
+                dir=config.STATE_DIR, suffix=".tmp", prefix="positions_"
+            )
+            with os.fdopen(fd, "w") as f:
+                json.dump(state, f, indent=2)
+            os.replace(tmp_path, config.POS_FILE)
+        except OSError:
+            log.exception("Failed to save positions to %s", config.POS_FILE)
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
