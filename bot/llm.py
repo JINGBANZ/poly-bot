@@ -1,6 +1,6 @@
 """LLM module — Claude (subscription) integration for market analysis.
 
-Uses Claude Sonnet via OAuth token (Claude subscription) for:
+Uses Claude via OAuth token (Claude subscription) for:
 1. Market scanning — filter candidates for verifiable edge
 2. Position analysis — hold/sell decisions based on news + price
 3. Trade thesis — generate required 3-sentence thesis before entry
@@ -29,56 +29,31 @@ def _get_token() -> str:
     except Exception:
         return ""
 
-MODEL = "claude-sonnet-4-6"
-MODEL_FALLBACK = "claude-3-haiku-20240307"
+# Model preference order — OAuth tokens may not support all models.
+# We probe on first call and cache the working model for the process lifetime.
+MODEL_CANDIDATES = [
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-20250514",
+    "claude-3-haiku-20240307",
+]
 API_URL = "https://api.anthropic.com/v1/messages"
 MAX_RETRIES = 2
 TIMEOUT = 90
 
-# Track model availability to avoid repeated failures
-_model_blacklist: dict[str, float] = {}  # model -> blacklist_until timestamp
-_MODEL_BLACKLIST_SECS = 3600  # retry blacklisted model after 1 hour
+# Cached working model (set by _probe_model on first call)
+_working_model: str | None = None
+_probe_done = False
 
 # Rate limiting
 _last_call_ts = 0.0
 _MIN_INTERVAL = 2.0  # seconds between calls
 
 
-# ── Core LLM Call ───────────────────────────────────────────────────
+# ── Model Probing ──────────────────────────────────────────────────
 
-def _pick_model() -> list[str]:
-    """Return ordered list of models to try, skipping blacklisted ones."""
-    now = time.time()
-    models = []
-    for m in [MODEL, MODEL_FALLBACK]:
-        until = _model_blacklist.get(m, 0)
-        if now >= until:
-            models.append(m)
-    # If all blacklisted (expired), try all anyway
-    return models if models else [MODEL, MODEL_FALLBACK]
-
-
-def call(prompt: str, system: str = "", temperature: float = 0.3,
-         max_tokens: int = 2048) -> str | None:
-    """Call Claude with OAuth token. Returns response text or None on failure.
-
-    Tries MODEL first, falls back to MODEL_FALLBACK on 400/404 errors.
-    Blacklists failing models for 1 hour to avoid repeated failures.
-    """
-    global _last_call_ts
-
-    token = _get_token()
-    if not token:
-        log("❌ LLM: No OAuth token found")
-        return None
-
-    # Rate limit
-    now = time.time()
-    wait = _MIN_INTERVAL - (now - _last_call_ts)
-    if wait > 0:
-        time.sleep(wait)
-
-    headers = {
+def _build_headers(token: str) -> dict:
+    """Build request headers for Anthropic API."""
+    return {
         "Authorization": f"Bearer {token}",
         "anthropic-version": "2023-06-01",
         "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
@@ -87,57 +62,112 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
         "content-type": "application/json",
     }
 
-    models_to_try = _pick_model()
 
-    for model in models_to_try:
-        body = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        if system:
-            body["system"] = system
+def _probe_model(token: str) -> str | None:
+    """Probe model candidates with a minimal request to find one that works.
 
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                _last_call_ts = time.time()
-                r = requests.post(API_URL, json=body, headers=headers, timeout=TIMEOUT)
+    Caches result for the process lifetime so we only probe once.
+    """
+    global _working_model, _probe_done
+    if _probe_done:
+        return _working_model
 
-                if r.status_code == 429:
-                    log(f"⚠️ LLM: Rate limited, waiting 60s")
-                    time.sleep(60)
-                    continue
+    headers = _build_headers(token)
+    test_body = {
+        "max_tokens": 5,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
 
-                if r.status_code == 401:
-                    log(f"❌ LLM: Auth failed — token may be expired")
-                    return None
+    for model in MODEL_CANDIDATES:
+        try:
+            test_body["model"] = model
+            r = requests.post(API_URL, json=test_body, headers=headers, timeout=15)
+            if r.status_code == 200:
+                log(f"ℹ️ LLM: Using model {model}")
+                _working_model = model
+                _probe_done = True
+                return _working_model
+            else:
+                log(f"ℹ️ LLM: Model {model} not available (HTTP {r.status_code}), trying next")
+        except Exception as e:
+            log(f"ℹ️ LLM: Model {model} probe failed: {e}")
 
-                if r.status_code in (400, 404):
-                    # Model not available — blacklist and try fallback
-                    _model_blacklist[model] = time.time() + _MODEL_BLACKLIST_SECS
-                    log(f"⚠️ LLM: Model {model} returned HTTP {r.status_code}, blacklisting for 1h")
-                    break  # break retry loop, try next model
+    log("❌ LLM: No working model found among candidates")
+    _probe_done = True
+    _working_model = None
+    return None
 
-                if r.status_code != 200:
-                    log(f"❌ LLM: HTTP {r.status_code}: {r.text[:200]}")
-                    return None
 
-                data = r.json()
-                text = data["content"][0]["text"]
-                if model != MODEL:
-                    log(f"ℹ️ LLM: Using fallback model {model}")
-                return text.strip()
+def call(prompt: str, system: str = "", temperature: float = 0.3,
+         max_tokens: int = 2048) -> str | None:
+    """Call Claude with OAuth token. Returns response text or None on failure.
 
-            except Exception as e:
-                log(f"❌ LLM: Error (attempt {attempt+1}): {e}")
-                if attempt < MAX_RETRIES:
-                    time.sleep(2 ** attempt)
-        else:
-            # Retry loop exhausted without break — move to next model
-            continue
-        # break from retry loop hit — try next model
-        continue
+    On first call, probes MODEL_CANDIDATES to find a working model and caches
+    it for the process lifetime. Subsequent calls use the cached model directly,
+    eliminating repeated 400 errors from unavailable models.
+    """
+    global _last_call_ts
+
+    token = _get_token()
+    if not token:
+        log("❌ LLM: No OAuth token found")
+        return None
+
+    # Probe for a working model on first call
+    model = _probe_model(token)
+    if not model:
+        return None
+
+    # Rate limit
+    now = time.time()
+    wait = _MIN_INTERVAL - (now - _last_call_ts)
+    if wait > 0:
+        time.sleep(wait)
+
+    headers = _build_headers(token)
+
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system:
+        body["system"] = system
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            _last_call_ts = time.time()
+            r = requests.post(API_URL, json=body, headers=headers, timeout=TIMEOUT)
+
+            if r.status_code == 429:
+                log(f"⚠️ LLM: Rate limited, waiting 60s")
+                time.sleep(60)
+                continue
+
+            if r.status_code == 401:
+                log(f"❌ LLM: Auth failed — token may be expired")
+                return None
+
+            if r.status_code in (400, 404):
+                # Model stopped working — reset probe cache so next call re-probes
+                global _probe_done
+                _probe_done = False
+                log(f"⚠️ LLM: Model {model} returned HTTP {r.status_code}, will re-probe next call")
+                return None
+
+            if r.status_code != 200:
+                log(f"❌ LLM: HTTP {r.status_code}: {r.text[:200]}")
+                return None
+
+            data = r.json()
+            text = data["content"][0]["text"]
+            return text.strip()
+
+        except Exception as e:
+            log(f"❌ LLM: Error (attempt {attempt+1}): {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** attempt)
 
     return None
 
