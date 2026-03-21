@@ -17,6 +17,7 @@ Requirements:
 import json
 import os
 import re
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -51,6 +52,14 @@ REDEMPTIONS_FILE = os.path.join(config.STATE_DIR, "redemptions.json")
 # Cooldown: don't attempt redemption more than once per 10 minutes per condition
 _last_attempt = {}  # condition_id -> timestamp
 ATTEMPT_COOLDOWN = 600  # seconds
+
+# Retry settings for relay API calls
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 1.0  # seconds; doubles each retry
+
+# Cached env vars (module-level)
+_cached_env: dict | None = None
+_cached_env_mtime: float = 0.0
 
 w3 = Web3()
 
@@ -168,29 +177,66 @@ def _authed_headers(builder_config: BuilderConfig, method: str, path: str, body:
 # ── Relay API ────────────────────────────────────────────────────────
 
 def _get_relay_payload(address: str) -> dict:
-    """GET /relay-payload?address=X&type=PROXY — returns {address, nonce}."""
-    r = requests.get(
-        f"{RELAYER_URL}/relay-payload",
-        params={"address": address, "type": "PROXY"},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()
+    """GET /relay-payload?address=X&type=PROXY — returns {address, nonce}.
+
+    Retries up to MAX_RETRIES times with exponential backoff on transient errors.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            r = requests.get(
+                f"{RELAYER_URL}/relay-payload",
+                params={"address": address, "type": "PROXY"},
+                timeout=15,
+            )
+            r.raise_for_status()
+            return r.json()
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            last_exc = e
+            # Don't retry client errors (4xx) except 429
+            if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                    raise
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BACKOFF_BASE * (2 ** attempt)
+                log(f"  ⚠️ Relay payload attempt {attempt + 1} failed: {e}, retrying in {delay:.1f}s")
+                time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 def _submit_transaction(builder_config: BuilderConfig, request_body: dict) -> dict:
-    """POST /submit with builder auth headers."""
+    """POST /submit with builder auth headers.
+
+    Retries up to MAX_RETRIES times with exponential backoff on transient errors.
+    """
     body_str = json.dumps(request_body)
-    headers = _authed_headers(builder_config, "POST", "/submit", body_str)
-    headers["Content-Type"] = "application/json"
-    r = requests.post(
-        f"{RELAYER_URL}/submit",
-        data=body_str,
-        headers=headers,
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+    last_exc: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            headers = _authed_headers(builder_config, "POST", "/submit", body_str)
+            headers["Content-Type"] = "application/json"
+            r = requests.post(
+                f"{RELAYER_URL}/submit",
+                data=body_str,
+                headers=headers,
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.json()
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            last_exc = e
+            if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
+                    raise
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BACKOFF_BASE * (2 ** attempt)
+                log(f"  ⚠️ Relay submit attempt {attempt + 1} failed: {e}, retrying in {delay:.1f}s")
+                time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 def _get_transaction(builder_config: BuilderConfig, tx_id: str) -> list:
@@ -338,16 +384,39 @@ def _execute_redemption(condition_id: str, env: dict) -> dict:
 
 # ── Env / State Helpers ──────────────────────────────────────────────
 
-def _load_env():
-    """Load polymarket env vars."""
+def _load_env(force_refresh: bool = False):
+    """Load polymarket env vars with module-level caching.
+
+    Re-reads the file only when it has been modified (based on mtime)
+    or when *force_refresh* is True.
+    """
+    global _cached_env, _cached_env_mtime
+
+    if not force_refresh and _cached_env is not None:
+        # Check if the file has changed since last read
+        try:
+            current_mtime = os.path.getmtime(ENV_FILE)
+        except OSError:
+            current_mtime = 0.0
+        if current_mtime == _cached_env_mtime:
+            return _cached_env
+
     env = os.environ.copy()
+    mtime = 0.0
     if os.path.exists(ENV_FILE):
+        try:
+            mtime = os.path.getmtime(ENV_FILE)
+        except OSError:
+            pass
         with open(ENV_FILE) as f:
             for line in f:
                 line = line.strip()
                 if "=" in line and not line.startswith("#"):
                     k, v = line.split("=", 1)
                     env[k] = v
+
+    _cached_env = env
+    _cached_env_mtime = mtime
     return env
 
 
@@ -361,10 +430,22 @@ def _load_redemptions():
 
 
 def _save_redemptions(data):
-    """Save redemption history."""
+    """Save redemption history atomically (write-to-temp + os.replace)."""
     os.makedirs(os.path.dirname(REDEMPTIONS_FILE), exist_ok=True)
-    with open(REDEMPTIONS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            dir=os.path.dirname(REDEMPTIONS_FILE), suffix=".tmp", prefix="redemptions_"
+        )
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, REDEMPTIONS_FILE)
+    except OSError:
+        log("Failed to save redemptions atomically")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _already_redeemed(condition_id: str) -> bool:
