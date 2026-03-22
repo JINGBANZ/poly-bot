@@ -81,7 +81,7 @@ def scan_deep_value() -> list[dict]:
         c["catalyst"] = catalyst
         # Boost score based on catalyst
         if catalyst.get("has_catalyst"):
-            days = catalyst.get("days_until", 999)
+            days = catalyst.get("days_until") or 999
             if days <= CATALYST_SOON_DAYS:
                 c["score"] += 30  # Imminent catalyst = big boost
             elif days <= 30:
