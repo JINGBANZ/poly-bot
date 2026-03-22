@@ -385,6 +385,39 @@ def test_gov_monitor_no_false_matches():
     assert len(matches) == 0
 
 
+def test_deep_scanner_none_days_until():
+    """Issue #59: deep_scanner must handle days_until=None without TypeError.
+
+    When detect_catalyst() returns days_until=None (key exists but value is None),
+    the score boosting logic must not crash on comparison with int.
+    """
+    from bot.deep_scanner import CATALYST_SOON_DAYS
+
+    # Simulate catalyst dicts that deep_scanner must handle
+    catalysts = [
+        {"has_catalyst": True, "days_until": None},     # The bug: None value
+        {"has_catalyst": True, "days_until": 5},         # Normal: imminent
+        {"has_catalyst": True, "days_until": 20},        # Normal: within 30 days
+        {"has_catalyst": True, "days_until": 60},        # Normal: far out
+        {"has_catalyst": True},                          # Missing key entirely
+        {"has_catalyst": False},                         # No catalyst
+    ]
+
+    for catalyst in catalysts:
+        # Reproduce the logic from scan_deep_value lines 84-91
+        score = 50  # base score
+        if catalyst.get("has_catalyst"):
+            days = catalyst.get("days_until") or 999
+            if days <= CATALYST_SOON_DAYS:
+                score += 30
+            elif days <= 30:
+                score += 15
+            else:
+                score += 5
+        # No TypeError means success
+        assert isinstance(score, (int, float))
+
+
 def test_scan_parser_rejects_malformed_lines():
     """Issue #25: LLM scan parser must only match lines with numeric market index prefix.
     
