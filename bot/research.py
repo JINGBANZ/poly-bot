@@ -122,10 +122,11 @@ def research_opportunity(market: dict, side: str, entry_price: float,
     log(f"  🔬 Researching: {question[:60]}")
 
     # Step 1: Adverse selection check (free — no search needed)
+    # Note: stable price is informational, not a blocker. Markets can be
+    # stable AND mispriced if a catalyst is approaching. (fix #61)
     adverse = check_adverse_selection(market)
     if adverse["stable"]:
-        log(f"  ⚠️ Adverse selection: {adverse['reason']}")
-        # Don't auto-PASS — still research, but weight this heavily
+        log(f"  ℹ️ Price stability note: {adverse['reason']}")
 
     # Step 2: Web search for current info (max 2 searches)
     # Search 1: Direct question search
@@ -168,9 +169,9 @@ def research_opportunity(market: dict, side: str, entry_price: float,
 
     adverse_text = ""
     if adverse["stable"]:
-        adverse_text = f"\n⚠️ ADVERSE SELECTION WARNING: {adverse['reason']}\n"
+        adverse_text = f"\nNote: {adverse['reason']}. Consider whether an upcoming catalyst could reprice this.\n"
 
-    prompt = f"""You are evaluating a Polymarket trade opportunity. Be SKEPTICAL.
+    prompt = f"""You are evaluating a Polymarket trade opportunity. Be calibrated — not reckless, but not paralyzed.
 
 Market: {question}
 Description: {description[:500]}
@@ -180,16 +181,27 @@ Initial scan reason: {scan_reason}
 Web search results:
 {search_text}
 
-CRITICAL RULES:
-1. CHEAP ≠ EDGE. A market at 15% might genuinely be 15% likely.
-2. Look for WHY this price exists. Smart money trades Polymarket.
-3. If price has been stable with high volume, the market is probably efficient.
-4. You need SPECIFIC DATA from the search results that contradicts the current price.
-5. "No news" is NOT bullish for the cheap side — it means no catalyst for repricing.
-6. Base rates matter: most cheap-side bets lose. That's why they're cheap.
+EVALUATION FRAMEWORK:
+1. CHEAP ≠ EDGE, but cheap + catalyst + data = potential edge.
+2. Consider whether the current price reflects ALL relevant information.
+3. Price stability with high volume suggests efficiency, but is NOT conclusive if a catalyst is approaching.
+4. Look for SPECIFIC DATA that supports a different probability than what the market implies.
+5. Quantitative reasoning (base rates, historical frequencies, deadline math) counts as edge.
+6. Synthesis of multiple data points into a coherent thesis IS valuable analysis, even if individual data points are public.
+
+WHEN TO SAY TRADE:
+- You can identify specific data (numbers, dates, precedents) suggesting the market probability is off by 10+ points
+- There is an approaching catalyst (deadline, vote, announcement) that creates repricing potential
+- Quantitative analysis (volatility math, base rate comparison, conditional probability) shows mispricing
+- The risk is bounded ($2 max position) and the thesis is falsifiable
+
+WHEN TO SAY PASS:
+- The market price accurately reflects the available evidence
+- The thesis relies on vague sentiment rather than specific data
+- The cheap side is cheap for obvious, well-understood reasons
 
 Reply with EXACTLY one of:
-TRADE — [thesis with specific data from search results]
+TRADE — [thesis with specific supporting data from search results]
 PASS — [specific reason this is NOT mispriced]
 INSUFFICIENT_DATA — [what data is missing]
 

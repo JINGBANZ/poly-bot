@@ -426,10 +426,10 @@ HARD RULES (non-negotiable):
 - Sports/esports require VERIFIED info edge. Bookmaker odds alone is NOT edge.
 
 EXPECTED OUTPUT DISTRIBUTION (per batch of ~15 markets):
-- SKIP: 8-12 markets (most are correctly priced)
+- SKIP: 7-10 markets (correctly priced, no angle)
 - RESEARCH: 2-4 markets (worth investigating further)
-- LEAN: 0-2 markets (probability estimate differs from price)
-- TRADE: 0-1 markets (RARE — genuine edge is rare)
+- LEAN: 2-4 markets (probability estimate may differ from price)
+- TRADE: 0-2 markets (strong thesis with specific supporting data)
 
 ADVERSARIAL THINKING — REQUIRED FOR EVERY MARKET:
 Before recommending anything above SKIP, you MUST answer:
@@ -437,32 +437,28 @@ Before recommending anything above SKIP, you MUST answer:
 2. "Why hasn't smart money already moved the price?" — If your thesis is obvious, it's already priced in.
 3. "Is this news ALREADY reflected in the current price?" — If a news story is >24 hours old, the market has ALREADY reacted to it. The price you see IS the post-news price.
 
-PUBLIC INFORMATION IS PRICED IN:
-- News articles, Reuters reports, government statements = ALREADY IN THE PRICE
-- If you read about military planning on Feb 18, the market moved on Feb 18
-- "The search results reveal..." is NOT edge — search results are public information
-- A market sitting at 15¢ with $1M volume means smart money AGREES it's ~15%
-- You CANNOT find edge by Googling. Google results are available to everyone.
-
-WHAT COUNTS AS GENUINE EDGE:
-- Quantitative: Your probability math differs AND you can show the calculation (e.g., BTC volatility math, base rate analysis with specific numbers)
-- Temporal: A deadline is approaching that creates mechanical mispricing (time decay not reflected)
-- Structural: The market structure itself is wrong (e.g., correlated markets with inconsistent pricing)
-- NOT edge: "news suggests probability is higher than price" — the news IS the price
+EDGE IDENTIFICATION:
+- Quantitative: Your probability math differs from market price (e.g., BTC volatility math, base rate analysis, historical frequency data)
+- Temporal: A deadline/catalyst is approaching that should reprice the market
+- Structural: Market structure issues (e.g., correlated markets with inconsistent pricing)
+- Synthesis: Combining multiple data points into a thesis the market may not have fully priced
+- Public information is USUALLY priced in, but markets can lag on: slow-developing stories, complex multi-factor situations, or when recent news changes probability by >10 points
 
 RECOMMENDATION CATEGORIES:
 - SKIP — Efficiently priced, no angle, or out of scope. DEFAULT CATEGORY.
-- RESEARCH — Quantitative angle worth calculating (NOT "news seems bullish").
-- LEAN — Your SPECIFIC probability math gives 10+ point gap. Show your work.
-- TRADE — You have a CONCRETE, FALSIFIABLE reason the market is wrong. Extremely rare.
+- RESEARCH — Has a quantitative or temporal angle worth investigating further.
+- LEAN — Your analysis suggests a 10+ point probability gap. Show reasoning.
+- TRADE — Concrete thesis with specific supporting data. The thesis must be FALSIFIABLE.
 
-COMMON MISTAKES — DON'T DO THESE:
-❌ "Search results reveal a dramatically different situation" → This is NEVER valid reasoning. Search results are public.
-❌ "Multiple credible sources report X" → The market reads those sources too.
-❌ "The evidence suggests higher probability" → Evidence available to everyone is not edge.
-❌ Recommending TRADE on the same market cycle after cycle with no new information.
-✅ "BTC needs 3% move in 30 days, historical 30-day vol is 15%, math gives ~40% vs 20¢ price" → This is real edge (quantitative).
-✅ "Resolution is in 3 days, market hasn't adjusted for time decay" → This is real edge (temporal)."""
+GOOD REASONING EXAMPLES:
+✅ "BTC needs 3% move in 30 days, historical 30-day vol is 15%, math gives ~40% vs 20¢ price"
+✅ "Resolution is in 3 days, market hasn't adjusted for time decay"
+✅ "Base rate for this type of event is 35%, market at 15¢, catalyst in 2 weeks"
+✅ "Recent policy shift + approaching deadline create repricing catalyst"
+
+BAD REASONING:
+❌ Vague sentiment without specific data
+❌ Recommending TRADE on same market repeatedly with no new info"""
 
 
 def analyze_markets(markets: list[dict]) -> str | None:
@@ -618,20 +614,18 @@ Question: {question}
 {f'Description: {description}' if description else ''}
 {f'Web search results:{chr(10)}{web_results}' if web_results else ''}
 
-CRITICAL: The web search results you see are PUBLIC INFORMATION. Every trader on Polymarket can Google the same things. The current market price ALREADY reflects this information. "The search results reveal..." is NOT a valid basis for TRADE.
-
 Determine:
 1. What is the current market price, and what probability does it imply?
-2. Do you have a QUANTITATIVE basis for a different probability? (Show math: base rates, volatility calculations, conditional probabilities — not just "evidence suggests")
-3. Why would the market — with millions of dollars of smart money — be wrong about this?
-4. What SPECIFIC information do you have that market participants do NOT?
+2. Do you have a QUANTITATIVE or DATA-DRIVEN basis for a different probability? (Base rates, volatility math, conditional probabilities, historical frequencies)
+3. Is there an approaching catalyst (deadline, event, announcement) that could reprice this market?
+4. Does your thesis identify specific, falsifiable factors?
 
 VERDICT RULES:
-- PASS: Default. The market is probably right. News existing ≠ mispricing.
-- TRADE: ONLY if you can answer #3 and #4 with concrete specifics. "News reports suggest higher probability" is NEVER sufficient — the market reads the news too.
-- If the market has been stable at this price for >24h with significant volume, smart money has ALREADY evaluated the same evidence you're seeing.
+- PASS: Default. The market price is broadly correct given available evidence.
+- TRADE: You have a specific, data-supported thesis with at least one of: quantitative edge, temporal catalyst, or structural mispricing.
+- Remember: $2 max position means individual losses are bounded. The bar for TRADE should reflect this — we're looking for positive expected value, not certainty.
 
-Be rigorous and SKEPTICAL. Assume the market is right until proven otherwise with MATH, not narrative."""
+Be calibrated. Not every market is mispriced, but some genuinely are."""
 
     return call(prompt, system=SYSTEM_PROMPT, max_tokens=3000)
 

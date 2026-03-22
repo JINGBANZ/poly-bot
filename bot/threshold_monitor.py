@@ -19,10 +19,12 @@ from .logger import log
 _acted_crossings = {}  # key -> ts
 _CROSSING_COOLDOWN = 3600  # Don't re-act on same crossing for 1 hour
 
-# Orderbook rejection cooldown: 6 hours minimum before retrying
-_REJECTION_COOLDOWN = 6 * 3600
-# Auto-blacklist after this many consecutive rejections
-_MAX_CONSECUTIVE_REJECTIONS = 3
+# Orderbook rejection cooldown: 2 hours minimum before retrying (fix #61: reduced from 6h)
+_REJECTION_COOLDOWN = 2 * 3600
+# Max consecutive rejections before extended cooldown (fix #61: no permanent blacklist)
+_MAX_CONSECUTIVE_REJECTIONS = 5
+# Extended cooldown after max rejections (24h instead of permanent blacklist)
+_EXTENDED_COOLDOWN = 24 * 3600
 
 _COOLDOWN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                               "state", "threshold_cooldowns.json")
@@ -37,6 +39,15 @@ def _load_cooldowns():
     try:
         with open(_COOLDOWN_FILE, "r") as f:
             _cooldown_state = json.load(f)
+        # fix #61: Remove legacy permanent blacklists — convert to time-based
+        changed = False
+        for key, state in _cooldown_state.items():
+            if state.get("blacklisted"):
+                del state["blacklisted"]
+                state["until"] = time.time() + _EXTENDED_COOLDOWN
+                changed = True
+        if changed:
+            _save_cooldowns()
     except (FileNotFoundError, json.JSONDecodeError):
         _cooldown_state = {}
 
@@ -56,13 +67,12 @@ def _cooldown_key(condition_id: str, direction: str) -> str:
 
 
 def _is_cooled_down(condition_id: str, direction: str) -> bool:
-    """Check if a market is in cooldown (rejected or blacklisted)."""
+    """Check if a market is in cooldown (rejected recently)."""
     key = _cooldown_key(condition_id, direction)
     state = _cooldown_state.get(key)
     if not state:
         return False
-    if state.get("blacklisted"):
-        return True  # Permanently blocked
+    # fix #61: No permanent blacklisting — all cooldowns are time-based
     return time.time() < state.get("until", 0)
 
 
@@ -75,8 +85,9 @@ def _record_rejection(condition_id: str, direction: str, reason: str):
     state["last_reason"] = reason
 
     if state["rejections"] >= _MAX_CONSECUTIVE_REJECTIONS:
-        state["blacklisted"] = True
-        log(f"   🚫 Auto-blacklisted after {state['rejections']} consecutive rejections: {reason}")
+        # fix #61: Extended cooldown instead of permanent blacklist
+        state["until"] = time.time() + _EXTENDED_COOLDOWN
+        log(f"   ⏸️ Extended cooldown (24h) after {state['rejections']} consecutive rejections: {reason}")
 
     _cooldown_state[key] = state
     _save_cooldowns()

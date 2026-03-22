@@ -21,7 +21,7 @@ from . import config
 # ── Constants ────────────────────────────────────────────────────────
 
 DEEP_VALUE_MIN = 0.10
-DEEP_VALUE_MAX = 0.20
+DEEP_VALUE_MAX = 0.25  # fix #61: align with config.VALUE_ZONE_MAX
 MIN_VOLUME = 50_000  # $50K hard floor
 MAX_CANDIDATES_TO_RESEARCH = 8  # Budget: max 1 search per candidate
 CATALYST_SOON_DAYS = 7  # "Imminent" catalyst threshold
