@@ -869,15 +869,17 @@ def run_cycle(dry_run=False) -> dict:
                                     log(f"  🔬 RESEARCH → TRADE: {research_result['thesis'][:100]}")
                                     # Promote to trade flow below
 
-                            # LEAN markets: research, alert with findings, don't auto-trade
+                            # LEAN markets: research, and auto-trade if research confirms (fix #61)
+                            # Previously LEAN signals were alert-only even when research said TRADE,
+                            # which was the #1 cause of zero throughput.
                             if is_lean:
                                 if verdict == "TRADE":
                                     log(f"  🤔 LEAN → TRADE: {research_result['thesis'][:150]}")
-                                    write_alert(f"🤔 LEAN → TRADE (research verified):\n{market.get('question')}\n{side} @ {entry_price:.2f}\n\n{research_result['thesis']}")
+                                    write_alert(f"🤔 LEAN → TRADE (auto-executing):\n{market.get('question')}\n{side} @ {entry_price:.2f}\n\n{research_result['thesis']}")
+                                    # Fall through to trade execution below (don't continue)
                                 else:
                                     log(f"  🤔 LEAN → {verdict}: {research_result['reason'][:100]}")
-                                    write_alert(f"🤔 LEAN → {verdict}:\n{market.get('question')}\n{research_result['reason'][:200]}")
-                                continue
+                                    continue
 
                             # TRADE markets: verify with research
                             if is_trade and verdict != "TRADE":

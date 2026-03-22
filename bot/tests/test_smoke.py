@@ -536,7 +536,7 @@ def test_no_legacy_balance_calls():
 
 
 def test_threshold_cooldown_and_blacklist():
-    """Phase 94: Threshold monitor applies cooldown on orderbook rejection and auto-blacklists."""
+    """Phase 94/fix #61: Threshold monitor applies time-based cooldown on orderbook rejection."""
     import time
     from bot import threshold_monitor as tm
 
@@ -552,28 +552,28 @@ def test_threshold_cooldown_and_blacklist():
     tm._record_rejection(cid, direction, "spread too wide: 199.6%")
     assert tm._is_cooled_down(cid, direction)
     assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 1
-    assert not tm._cooldown_state[tm._cooldown_key(cid, direction)].get("blacklisted")
 
     # Second rejection
     tm._cooldown_state[tm._cooldown_key(cid, direction)]["until"] = 0  # expire cooldown
     tm._record_rejection(cid, direction, "spread too wide: 199.6%")
     assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 2
-    assert not tm._cooldown_state[tm._cooldown_key(cid, direction)].get("blacklisted")
 
-    # Third rejection → auto-blacklisted
-    tm._cooldown_state[tm._cooldown_key(cid, direction)]["until"] = 0
-    tm._record_rejection(cid, direction, "spread too wide: 199.6%")
-    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == 3
-    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["blacklisted"] is True
-    assert tm._is_cooled_down(cid, direction)  # blacklisted = permanent cooldown
+    # After MAX_CONSECUTIVE_REJECTIONS → extended cooldown (not permanent blacklist)
+    for i in range(tm._MAX_CONSECUTIVE_REJECTIONS - 2):
+        tm._cooldown_state[tm._cooldown_key(cid, direction)]["until"] = 0
+        tm._record_rejection(cid, direction, "spread too wide: 199.6%")
+    assert tm._cooldown_state[tm._cooldown_key(cid, direction)]["rejections"] == tm._MAX_CONSECUTIVE_REJECTIONS
+    # fix #61: No permanent blacklist — uses extended time-based cooldown instead
+    assert "blacklisted" not in tm._cooldown_state[tm._cooldown_key(cid, direction)]
+    assert tm._is_cooled_down(cid, direction)  # extended cooldown active
 
     # Clear on success
     tm._clear_rejection(cid, direction)
     assert not tm._is_cooled_down(cid, direction)
 
-    # Cooldown constants
-    assert tm._REJECTION_COOLDOWN >= 6 * 3600
-    assert tm._MAX_CONSECUTIVE_REJECTIONS == 3
+    # Cooldown constants — fix #61: reduced cooldown, increased max rejections
+    assert tm._REJECTION_COOLDOWN >= 2 * 3600
+    assert tm._MAX_CONSECUTIVE_REJECTIONS == 5
 
 
 def test_dust_position_filter():
