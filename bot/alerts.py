@@ -14,7 +14,36 @@ CRITICAL = "CRITICAL"
 
 # Dedup: hash -> timestamp of last write
 _recent_alerts = {}  # hash -> epoch
-_DEDUP_WINDOW = 1800  # 30 minutes
+_DEDUP_WINDOW = 14400  # 4 hours (was 30 min — too short, same alerts kept recurring)
+_DEDUP_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "state", "alert_dedup.json")
+
+
+def _load_dedup():
+    """Load persistent dedup state from disk."""
+    global _recent_alerts
+    try:
+        if os.path.exists(_DEDUP_FILE):
+            with open(_DEDUP_FILE) as f:
+                _recent_alerts = json.load(f)
+            # Clean expired entries
+            now = time.time()
+            _recent_alerts = {k: v for k, v in _recent_alerts.items() if now - v < _DEDUP_WINDOW}
+    except Exception:
+        _recent_alerts = {}
+
+
+def _save_dedup():
+    """Persist dedup state to disk."""
+    try:
+        os.makedirs(os.path.dirname(_DEDUP_FILE), exist_ok=True)
+        with open(_DEDUP_FILE, "w") as f:
+            json.dump(_recent_alerts, f)
+    except Exception:
+        pass
+
+
+# Load on import
+_load_dedup()
 
 
 def _alert_hash(msg: str) -> str:
@@ -54,6 +83,9 @@ def write_alert(msg: str, severity: str = None):
     for k in list(_recent_alerts):
         if _recent_alerts[k] < cutoff:
             del _recent_alerts[k]
+
+    # Persist to disk so dedup survives restarts
+    _save_dedup()
 
     if severity is None:
         severity = _classify_severity(msg)
