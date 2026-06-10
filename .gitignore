@@ -41,3 +41,4 @@ evolution/state/*.json
 evolution/inbox/*
 !evolution/inbox/.gitkeep
 !evolution/state/.gitkeep
+research/data/
