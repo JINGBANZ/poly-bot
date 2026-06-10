@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install py-clob-client requests feedparser duckduckgo-search pytest
+          pip install -r requirements-test.txt
 
       - name: Run smoke tests
         run: |

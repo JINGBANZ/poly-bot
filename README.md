@@ -17,7 +17,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # 3. Install dependencies
-pip install py-clob-client requests feedparser ddgs web3 eth-account eth-abi py-builder-signing-sdk pytest
+pip install -r requirements.txt
 
 # 4. Add trading credentials (git-ignored, lives in .secrets/)
 mkdir -p .secrets
@@ -83,142 +83,71 @@ Credentials loaded from `.secrets/.polymarket-env` (override path via the `POLYM
 
 ## Architecture
 
+All trading, scanning, resolution, redemption, and research logic lives in the `bot/` package. Key modules (see `bot/` for the full set):
+
 ```
 bot/                     Core daemon package (run via `python -m bot.main`)
 ├── config.py            All settings — single source of truth for thresholds, paths, API URLs
+├── main.py              Daemon loop entry point (positions → guardrails → resolution → redemption → scanning)
 ├── api.py               All external API calls (data-api, CLOB, Gamma)
+├── execution.py         All buys/sells go through here (order placement, trade logging, circuit breakers)
 ├── portfolio.py         Position & Portfolio classes with P&L calculation
-├── guardrails.py        Stop-loss (-50%), take-profit (+200%), entry validation, active sell list
+├── guardrails.py        Stop-loss (-35%), take-profit (+200%), entry validation
 ├── resolver.py          Market resolution detection (checks if markets closed + winner)
+├── redeemer.py          Auto-redemption of resolved positions via the Builder Relayer (pure Python)
+├── research.py          LLM-driven market analysis / trade thesis generation
+├── deep_scanner.py      Market scanner — scores candidates by research priority
 ├── alerts.py            Alert queue (writes to state/pending_alerts.jsonl)
-├── news.py              Twitter/X monitoring for position-relevant news
-├── search.py            Gamma API client-side search (bulk fetch + keyword filter)
-├── logger.py            Simple file + stdout logger
-└── main.py              Daemon loop entry point
+├── news.py / rss_news.py / web_search.py   News + sentiment inputs for research
+└── llm.py               Multi-provider LLM client (Anthropic / Gemini)
 
-scripts/                 Standalone tools (run manually or by agent)
-├── daily_report.py      Generate P&L report from state/positions.json + trade_log
-├── earnings_pipeline.py Discover & analyze earnings markets (known slugs + beat rates)
-├── gasless_redeem.py     Redeem winning positions via Polymarket relayer (gasless)
-├── portfolio_check.py   On-chain position & trade verification via CLOB client
-├── position_sizer.py    Kelly Criterion position sizing calculator
-├── quick_scan.py        Market scanner — scores markets by research priority
-├── redeem_builder.mjs   Node.js gasless redemption script (alternative to Python version)
-├── resolution_watcher.py Check if held positions resolved; update state & log P&L
-├── sentiment_scanner.py  Keyword sentiment scoring from web search results
-├── twitter_monitor.py   X/Twitter API sentiment scan for specific queries
-└── wallet_scanner.py    Discover & analyze top Polymarket trader wallets
-
-state/                   Runtime state (persisted between runs)
-├── positions.json       Current open positions with P&L (written by bot + resolution_watcher)
+state/                   Runtime state (git-ignored, persisted between runs)
+├── positions.json       Current open positions with P&L (source of truth)
 ├── trade_log.jsonl      Append-only log of all buys/sells/resolutions
 ├── pending_alerts.jsonl Alert queue for delivery
-├── sell_list.json       Active sell list — positions to exit regardless of SL/TP
-├── earnings_markets.json Discovered earnings markets with analysis
-├── sentiment_cache.json Cached sentiment scan results
-└── tracked_wallets.json Top trader wallets from leaderboard
+├── redemptions.json     Redeemed position history
+├── resolved_cache.json  Already-resolved markets (dedup)
+├── illiquid_sl.json     Stop-loss tracking for illiquid positions that can't sell yet
+└── KILL_SWITCH          Touch this file to halt all trading
 
 analysis/                Research notes & strategy documents (human-readable)
+evolution/               Self-improvement loop (conductor + subagent prompts)
 logs/                    Bot logs (logs/bot.log)
-backtest/                Historical backtest data & results
 ```
 
-## Scripts Reference
+## Bot Daemon
 
-### Bot Daemon
 ```bash
 python -m bot.main              # Run as daemon (loops every 5 min)
 python -m bot.main --once       # Run one cycle and exit
 python -m bot.main --dry-run    # Don't execute trades
 ```
 
-### Daily Report
-```bash
-python scripts/daily_report.py          # Human-readable P&L report
-python scripts/daily_report.py --json   # JSON output
-```
-
-### Market Scanner
-```bash
-python scripts/quick_scan.py                    # Top 10 research candidates
-python scripts/quick_scan.py --top 20           # More results
-python scripts/quick_scan.py --category earnings # Filter by category
-python scripts/quick_scan.py --balance 5.0      # Set bankroll for sizing
-```
-
-### Earnings Pipeline
-```bash
-python scripts/earnings_pipeline.py discover     # Find active earnings markets
-python scripts/earnings_pipeline.py analyze BYND # Deep-dive one ticker
-python scripts/earnings_pipeline.py portfolio    # Check earnings positions
-python scripts/earnings_pipeline.py recommend    # Show trade recommendations
-```
-
-### Position Sizer (Kelly Criterion)
-```bash
-python scripts/position_sizer.py --prob 0.7 --price 0.5 --bankroll 15 --exposure 13
-python scripts/position_sizer.py --prob 0.7 --price 0.5 --bankroll 15 --exposure 13 --json
-```
-
-### Resolution Watcher
-```bash
-python scripts/resolution_watcher.py            # Check & update resolved positions
-python scripts/resolution_watcher.py --dry-run   # Check without modifying state
-```
-
-### Portfolio Check (On-Chain)
-```bash
-python scripts/portfolio_check.py   # Show orders, trades, and local state
-```
-
-### Sentiment Scanner
-```bash
-python scripts/sentiment_scanner.py queries              # Generate search queries
-echo '{}' | python scripts/sentiment_scanner.py process  # Process search results
-python scripts/sentiment_scanner.py show                 # View cached sentiment
-```
-
-### Wallet Scanner
-```bash
-python scripts/wallet_scanner.py                  # Discover top wallets + deep-scan top 3
-python scripts/wallet_scanner.py scan 0xABCD...   # Analyze a specific wallet
-python scripts/wallet_scanner.py leaderboard      # Show current leaderboard
-```
-
-### Twitter Monitor
-```bash
-python scripts/twitter_monitor.py   # Scan X/Twitter for position-relevant tweets
-```
-
-### Gasless Redemption
-```bash
-python scripts/gasless_redeem.py    # Redeem winning positions via relayer
-node scripts/redeem_builder.mjs     # Alternative Node.js redemption
-```
-
 ## Trading Rules (from config.py)
 
 | Rule | Value |
 |------|-------|
-| Stop-loss | -50% from entry |
+| Stop-loss | -35% from entry |
 | Take-profit | +200% from entry |
 | Min sell price | $0.05 |
 | Min bid depth | $5 |
 | Min 24h volume | $50,000 |
 | Max position size | $2.00 |
-| Value zone | 10¢–45¢ |
+| Value zone | 10¢–25¢ |
 | Loop interval | 5 minutes |
+
+`config.py` is the single source of truth — values above can drift, so check it if in doubt.
 
 ## Dependencies
 
-Installed into `/opt/poly-bot/venv` (see [Setup](#setup)):
+Declared in `requirements.txt`, installed into `/opt/poly-bot/venv` (see [Setup](#setup)):
 - `requests` — HTTP client for all API calls
 - `py-clob-client` — Polymarket CLOB trading client
-- `feedparser`, `ddgs` — RSS news + web search for research
-- `web3`, `eth-account`, `eth-abi` — Blockchain interaction
+- `feedparser`, `ddgs`, `python-dateutil` — RSS news + web search for research
+- `web3`, `eth-account`, `eth-abi` — blockchain interaction
 - `py-builder-signing-sdk` — Builder Relayer signing for gasless redemption
 
-`requirements-test.txt` pins the minimal subset needed for CI/import-time (`pip install -r requirements-test.txt`).
+`requirements-test.txt` adds `pytest` on top of `requirements.txt` for CI (`pip install -r requirements-test.txt`).
 
 ## systemd Service
 
