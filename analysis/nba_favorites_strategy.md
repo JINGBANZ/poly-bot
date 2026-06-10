@@ -141,6 +141,35 @@ candidate pockets failed and were discarded.
 6. **Resolution risk:** NBA game markets resolve mechanically within hours;
    UMA dispute risk is negligible for game outcomes.
 
+## Deployment (live since 2026-06-10)
+
+Implemented in `bot/tipoff90.py`, called every 5-min cycle from `bot/main.py`
+(section 0a2). Guardrail stack, in order:
+
+1. Global kill switch + circuit breakers (daily trade cap, daily loss cap,
+   balance floor) — strategy halts with everything else.
+2. Strategy disable flag `state/TIPOFF90_DISABLED` — set manually, or
+   **automatically if cumulative ROI < 0 after 30 resolved trades**
+   (edge-decay kill switch).
+3. Strategy daily cap (`TIPOFF90_MAX_TRADES_PER_DAY = 3`), one entry per game
+   ever, $50k 24h-volume floor.
+4. Live order book checks: best ask in [0.90, 0.97), spread ≤ 2¢, in-band ask
+   depth ≥ 5× order (so the FOK buy cannot sweep past the band).
+5. Late-scratch guard: skip if the price fell > 2¢ in the last 15 minutes.
+6. Sizing: min($2, 10% of free balance), ≥ $1 FOK minimum.
+7. **Hold-to-resolution protection**: open Tipoff 90 positions are exempt from
+   stop-loss / take-profit / LLM sells (in-game dips are expected; the
+   backtested edge requires holding). Exemption lapses after 48h so postponed
+   games revert to normal guardrails.
+8. Every entry/outcome recorded in `state/tipoff90_state.json`; resolutions
+   reconciled each cycle; wins/losses alerted.
+
+Note the deliberate bypass: entries do NOT go through `validate_entry` /
+`execute_buy`, whose 10–25¢ value zone, 85¢ ceiling, and R:R filters encode
+the *cheap-side longshot* strategy and would reject every Tipoff 90 trade.
+The checks above are this strategy's equivalents, tested in
+`tests/test_tipoff90.py` (25 tests).
+
 ## Reproduce
 
 ```bash

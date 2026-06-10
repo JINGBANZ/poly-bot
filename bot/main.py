@@ -358,6 +358,17 @@ def run_cycle(dry_run=False) -> dict:
             log(f"🚨 Circuit breaker: {cb_reason}")
         dry_run = True
 
+    # 0a2. FAST PATH: Tipoff 90 — NBA pre-game heavy favorites (every cycle)
+    # Has its own entry guardrails + edge-decay auto-disable (bot/tipoff90.py).
+    try:
+        from .tipoff90 import run_tipoff90_check
+        tipoff_buys = run_tipoff90_check(dry_run=dry_run)
+        if tipoff_buys > 0:
+            log(f"🏀 Tipoff 90: {tipoff_buys} trade(s) executed")
+    except Exception as e:
+        if verbose:
+            log(f"⚠️ Tipoff 90 check: {e}")
+
     # 0b. Manage open limit orders (check fills, cancel stale)
     try:
         manage_open_orders(dry_run=dry_run)
@@ -443,6 +454,15 @@ def run_cycle(dry_run=False) -> dict:
 
         # Skip guardrails for dust positions (cheap but no point)
         if _is_dust_position(pos):
+            continue
+
+        # Tipoff 90 positions are hold-to-resolution: in-game dips are expected
+        # and must NOT trigger stop-loss/take-profit (the backtested edge is
+        # holding through resolution). Exemption lapses after 48h (postponed
+        # games revert to normal guardrails) — see bot/tipoff90.py.
+        from .tipoff90 import is_tipoff90_position
+        if is_tipoff90_position(pos.token_id):
+            results["TIPOFF90_HOLD"] = results.get("TIPOFF90_HOLD", 0) + 1
             continue
 
         # Guardrail check
@@ -655,6 +675,12 @@ def run_cycle(dry_run=False) -> dict:
             for pos in portfolio.positions:
                 # Dust filter: skip positions worth less than MIN_REVIEW_VALUE
                 if _is_dust_position(pos):
+                    continue
+
+                # Tipoff 90 positions resolve within hours and are
+                # hold-to-resolution — never LLM-sell them mid-game.
+                from .tipoff90 import is_tipoff90_position as _is_t90
+                if _is_t90(pos.token_id):
                     continue
 
                 # Noise reduction: skip LLM if price hasn't moved >5% since last analysis

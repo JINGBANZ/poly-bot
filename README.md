@@ -138,6 +138,8 @@ python -m bot.main --dry-run    # Don't execute trades
 
 `config.py` is the single source of truth — values above can drift, so check it if in doubt.
 
+**Tipoff 90 strategy** (`bot/tipoff90.py`): buys NBA pre-game favorites priced 90–96¢ in the last 30 min before tipoff and holds to resolution (exempt from stop-loss/take-profit while open). Has its own entry guardrails, daily cap, and an edge-decay auto-disable. See `analysis/nba_favorites_strategy.md` for the backtest (84/84, +7.5%/trade) and the full guardrail stack. Disable via `state/TIPOFF90_DISABLED` or `TIPOFF90_ENABLED = False`.
+
 ## Dependencies
 
 Declared in `requirements.txt`, installed into `/opt/poly-bot/venv` (see [Setup](#setup)):

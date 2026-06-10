@@ -60,3 +60,21 @@ KILL_SWITCH_FILE = os.path.join(STATE_DIR, "KILL_SWITCH")  # Touch this file to 
 LOOP_INTERVAL_SEC = 300       # Main loop: check every 5 minutes
 SCAN_INTERVAL_SEC = 1800      # Market scan: every 30 minutes
 DEEP_SCAN_INTERVAL_SEC = 3600 # Deep research: every hour
+
+# Tipoff 90 strategy — NBA pre-game heavy favorites
+# (see analysis/nba_favorites_strategy.md; backtest 84/84, +7.5%/trade)
+TIPOFF90_ENABLED = True
+TIPOFF90_NBA_TAG_ID = 745          # Gamma tag for NBA
+TIPOFF90_BAND_LO = 0.90            # Buy favorite if best ask >= this ...
+TIPOFF90_BAND_HI = 0.97            # ... and < this (exclusive)
+TIPOFF90_WINDOW_MIN = 30           # Only enter within this many minutes before tipoff
+TIPOFF90_MAX_POSITION_USD = 2.00   # Max $ per game
+TIPOFF90_BANKROLL_FRACTION = 0.10  # ... and never more than 10% of free balance
+TIPOFF90_MAX_TRADES_PER_DAY = 3    # Strategy-level daily cap (global cap also applies)
+TIPOFF90_MAX_SPREAD = 0.02         # Skip if bid/ask spread wider than 2c
+TIPOFF90_MIN_DEPTH_MULT = 5.0      # In-band ask depth must be >= 5x order size
+TIPOFF90_DROP_GUARD = 0.02         # Skip if price fell >2c in last 15min (late scratch)
+TIPOFF90_MIN_VOLUME_24H = 50_000   # Min market 24h volume
+TIPOFF90_HOLD_MAX_HOURS = 48       # After this, position reverts to normal guardrails
+TIPOFF90_KILL_AFTER_TRADES = 30    # Auto-disable if cumulative ROI < 0 after N resolved trades
+TIPOFF90_DISABLED_FILE = os.path.join(STATE_DIR, "TIPOFF90_DISABLED")
