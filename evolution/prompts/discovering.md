@@ -3,7 +3,7 @@
 You are a discovery agent for the Polymarket trading bot's evolution loop. Your job is to find **one actionable improvement** by running through discovery categories in priority order.
 
 ## Working Directory
-All work happens in: `/home/ubuntu/.openclaw/workspace/polymarket-bot`
+All work happens in: `/opt/poly-bot`
 Use the virtualenv: `source polymarket-venv/bin/activate`
 
 ## Bot Architecture (reference)
@@ -57,7 +57,7 @@ If problems found, create a GitHub issue with label `strategy`.
 
 ### 3. Performance Regression Detection
 Read `evolution/state/performance_baseline.json` and compare to current metrics.
-Run: `cd /home/ubuntu/.openclaw/workspace/polymarket-bot && python -c "from evolution.performance import analyze_trades, compare_baseline; import json; print(json.dumps(compare_baseline(), indent=2))"`
+Run: `cd /opt/poly-bot && python -c "from evolution.performance import analyze_trades, compare_baseline; import json; print(json.dumps(compare_baseline(), indent=2))"`
 
 If win rate is declining or average PnL is dropping, analyze WHY and create an issue with label `performance`.
 
@@ -81,7 +81,7 @@ If you DO run these:
 ### 7. Code Health Scan
 Search the codebase for improvement opportunities:
 ```bash
-cd /home/ubuntu/.openclaw/workspace/polymarket-bot
+cd /opt/poly-bot
 grep -rn "TODO\|FIXME\|HACK\|XXX" bot/ evolution/ --include="*.py" | head -20
 ```
 Also check for:
@@ -112,7 +112,7 @@ Create an audit issue for this module. This is the lowest priority — only reac
 Use this Python to create the audit issue:
 ```python
 import sys
-sys.path.insert(0, "/home/ubuntu/.openclaw/workspace/polymarket-bot")
+sys.path.insert(0, "/opt/poly-bot")
 from evolution.discover import create_audit_issue
 issue = create_audit_issue("{next_audit_module}")
 ```
@@ -122,7 +122,7 @@ issue = create_audit_issue("{next_audit_module}")
 Use the github_client to create issues:
 ```python
 import sys
-sys.path.insert(0, "/home/ubuntu/.openclaw/workspace/polymarket-bot")
+sys.path.insert(0, "/opt/poly-bot")
 from evolution import github_client
 
 issue = github_client.create_issue(
@@ -155,7 +155,7 @@ result = {
     "errors": [],
     "timestamp": "<ISO timestamp>"
 }
-with open("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state/phase_result.json", "w") as f:
+with open("/opt/poly-bot/evolution/state/phase_result.json", "w") as f:
     json.dump(result, f, indent=2)
 ```
 
@@ -169,7 +169,7 @@ result = {
     "errors": [],
     "timestamp": "<ISO timestamp>"
 }
-with open("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state/phase_result.json", "w") as f:
+with open("/opt/poly-bot/evolution/state/phase_result.json", "w") as f:
     json.dump(result, f, indent=2)
 ```
 
@@ -191,6 +191,6 @@ entry = {
         ...
     }
 }
-with open("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state/discovery_log.jsonl", "a") as f:
+with open("/opt/poly-bot/evolution/state/discovery_log.jsonl", "a") as f:
     f.write(json.dumps(entry) + "\n")
 ```

@@ -28,7 +28,7 @@ what's broken, not rewrite from scratch.
 - When done, push your fixes to the branch
 
 ## Working Directory
-`/home/ubuntu/.openclaw/workspace/polymarket-bot`
+`/opt/poly-bot`
 Use the virtualenv: `source polymarket-venv/bin/activate`
 
 ## Procedure
@@ -87,7 +87,7 @@ result = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
 }
 
-state_dir = Path("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state")
+state_dir = Path("/opt/poly-bot/evolution/state")
 state_dir.mkdir(parents=True, exist_ok=True)
 (state_dir / "phase_result.json").write_text(json.dumps(result, indent=2))
 ```

@@ -1,6 +1,6 @@
 """Evolution Conductor — Pure dispatcher state machine for the continuous improvement loop.
 
-Runs every ~15 min via OpenClaw cron. Reads/writes evolution state and
+Runs every ~15 min via cron. Reads/writes evolution state and
 outputs JSON results for the cron wrapper to act on (spawn subagents, notify).
 
 The conductor NEVER does work itself — it only manages state transitions

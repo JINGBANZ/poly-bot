@@ -24,7 +24,7 @@ Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 m
 1. **ALL trades** go through `execution.execute_buy()` / `execute_sell()` — never call `api.market_buy/sell` directly
 2. **Run `pytest bot/tests/test_smoke.py`** before any restart
 3. **Commit and push** after any code change
-4. **Builder API credentials** needed for redemption — stored in `/home/ubuntu/.openclaw/.polymarket-env`
+4. **Builder API credentials** needed for redemption — stored in `.secrets/.polymarket-env` (override path via `POLYMARKET_ENV_FILE`)
 5. If redemption fails with 401: credentials need refresh at polymarket.com/settings → Builder tab
 6. **NEVER write to live state files during testing.** `state/` and `evolution/state/` contain live runtime data. Use temp directories or mock data for tests. Writing placeholder/test data to `evolution/state/evolution_state.json` will corrupt the live evolution loop.
 
@@ -33,5 +33,5 @@ Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 m
 |------|---------|
 | `state/positions.json` | Current portfolio (source of truth) |
 | `state/redemptions.json` | Redeemed position history |
-| `state/pending_alerts.jsonl` | Alerts queue for OpenClaw to deliver |
+| `state/pending_alerts.jsonl` | Alerts queue for the notifier to deliver |
 | `state/resolved_cache.json` | Already-resolved markets (dedup) |

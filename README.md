@@ -31,7 +31,7 @@ sudo systemctl start polymarket-bot
 
 ## Environment
 
-Credentials loaded from `/home/ubuntu/.openclaw/.polymarket-env`:
+Credentials loaded from `.secrets/.polymarket-env` (override path via the `POLYMARKET_ENV_FILE` env var):
 - `POLYMARKET_PRIVATE_KEY` — EOA private key
 - `POLYMARKET_FUNDER` — Proxy wallet address
 - `POLYMARKET_BUILDER_API_KEY` / `POLYMARKET_BUILDER_API_SECRET` / `POLYMARKET_BUILDER_PASSPHRASE` — Builder API for gasless transactions

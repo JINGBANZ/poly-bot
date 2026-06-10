@@ -20,6 +20,12 @@ POS_FILE = os.path.join(STATE_DIR, "positions.json")
 ALERTS_FILE = os.path.join(STATE_DIR, "pending_alerts.jsonl")
 LOG_FILE = os.path.join(LOGS_DIR, "bot.log")
 
+# Secrets / credentials — default to <repo>/.secrets/, override via env vars.
+SECRETS_DIR = os.environ.get("POLY_BOT_SECRETS_DIR", os.path.join(BASE_DIR, ".secrets"))
+POLYMARKET_ENV_FILE = os.environ.get("POLYMARKET_ENV_FILE", os.path.join(SECRETS_DIR, ".polymarket-env"))
+ANTHROPIC_TOKEN_FILE = os.environ.get("ANTHROPIC_TOKEN_FILE", os.path.join(SECRETS_DIR, ".anthropic-token"))
+GITHUB_TOKEN_FILE = os.environ.get("GITHUB_TOKEN_FILE", os.path.join(SECRETS_DIR, ".github-token"))
+
 # Trading rules
 STOP_LOSS_PCT = 0.35          # Sell if down 35% from entry (fix #29: tightened from 50%)
 TAKE_PROFIT_PCT = 2.00        # Take profit at 200% gain

@@ -28,7 +28,7 @@ Investigate why the `{failed_phase}` phase failed for issue #{issue_number}.
 ```
 
 ## Working Directory
-`/home/ubuntu/.openclaw/workspace/polymarket-bot`
+`/opt/poly-bot`
 Use the virtualenv: `source polymarket-venv/bin/activate`
 
 ## Procedure
@@ -44,7 +44,7 @@ You have full freedom to investigate. Check:
 If the failed phase was WORKING, the most common failure is that the worker
 completed its code changes but failed to write `phase_result.json`. Check:
 ```bash
-cd /home/ubuntu/.openclaw/workspace/polymarket-bot
+cd /opt/poly-bot
 # Does the branch exist with commits?
 git log --oneline origin/{branch} 2>/dev/null | head -5
 # If commits exist, the work was DONE — the communication failed, not the work.
@@ -53,7 +53,7 @@ git log --oneline origin/{branch} 2>/dev/null | head -5
 
 **Git state:**
 ```bash
-cd /home/ubuntu/.openclaw/workspace/polymarket-bot
+cd /opt/poly-bot
 git status
 git log --oneline -5
 git branch -a | grep {branch}
@@ -62,7 +62,7 @@ git branch -a | grep {branch}
 **GitHub API:**
 ```python
 import sys
-sys.path.insert(0, "/home/ubuntu/.openclaw/workspace/polymarket-bot")
+sys.path.insert(0, "/opt/poly-bot")
 from evolution import github_client
 
 # Check PR status
@@ -130,7 +130,7 @@ result = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
 }
 
-state_dir = Path("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state")
+state_dir = Path("/opt/poly-bot/evolution/state")
 state_dir.mkdir(parents=True, exist_ok=True)
 (state_dir / "phase_result.json").write_text(json.dumps(result, indent=2))
 ```

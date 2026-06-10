@@ -3,9 +3,9 @@ __pycache__/
 *.log
 node_modules/
 venv/
-polymarket-venv/
 *.egg-info/
 .env
+.secrets/
 twitter_log.txt
 scanner_log.txt
 positions.json
@@ -15,8 +15,7 @@ state/sentiment_cache.json
 state/tracked_wallets.json
 logs/
 
-# OpenClaw workspace files
-.openclaw/
+# Local agent/runtime scratch files
 memory/
 AGENTS.md
 SOUL.md

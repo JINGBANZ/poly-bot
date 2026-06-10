@@ -5,10 +5,10 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/.openclaw/workspace/polymarket-bot
-EnvironmentFile=/home/ubuntu/.openclaw/.polymarket-env
-ExecStartPre=/home/ubuntu/.openclaw/workspace/polymarket-venv/bin/python3 -m pytest bot/tests/ -q --tb=line
-ExecStart=/home/ubuntu/.openclaw/workspace/polymarket-venv/bin/python3 -m bot.main
+WorkingDirectory=/opt/poly-bot
+EnvironmentFile=/opt/poly-bot/.secrets/.polymarket-env
+ExecStartPre=/opt/poly-bot/venv/bin/python3 -m pytest bot/tests/ -q --tb=line
+ExecStart=/opt/poly-bot/venv/bin/python3 -m bot.main
 Restart=on-failure
 RestartSec=30
 

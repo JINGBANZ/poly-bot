@@ -3,7 +3,6 @@
 import logging
 import json
 import os
-import sys
 import requests
 from . import config
 
@@ -113,7 +112,7 @@ def _load_env():
     if os.environ.get("POLYMARKET_PRIVATE_KEY"):
         _env_loaded = True
         return
-    env_file = "/home/ubuntu/.openclaw/.polymarket-env"
+    env_file = config.POLYMARKET_ENV_FILE
     if not os.path.exists(env_file):
         _env_loaded = True
         return
@@ -140,7 +139,6 @@ def get_clob_client():
         return _clob_client
     try:
         _load_env()
-        sys.path.insert(0, '/home/ubuntu/.openclaw/workspace/polymarket-venv/lib/python3.12/site-packages')
         from py_clob_client.client import ClobClient
         from py_clob_client.clob_types import ApiCreds
 

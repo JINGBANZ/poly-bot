@@ -28,7 +28,7 @@ Issue: #{number} — {title}
 - When done, your changes should be committed to the branch and pushed
 
 ## Working Directory
-All work happens in: `/home/ubuntu/.openclaw/workspace/polymarket-bot`
+All work happens in: `/opt/poly-bot`
 Use the virtualenv: `source polymarket-venv/bin/activate`
 
 ## For Strategy Changes
@@ -99,7 +99,7 @@ result = {
     "timestamp": datetime.now(timezone.utc).isoformat(),
 }
 
-state_dir = Path("/home/ubuntu/.openclaw/workspace/polymarket-bot/evolution/state")
+state_dir = Path("/opt/poly-bot/evolution/state")
 state_dir.mkdir(parents=True, exist_ok=True)
 (state_dir / "phase_result.json").write_text(json.dumps(result, indent=2))
 ```

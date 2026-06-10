@@ -1,5 +1,5 @@
 #!/bin/bash
 set -euo pipefail
-cd /home/ubuntu/.openclaw/workspace/polymarket-bot
-source polymarket-venv/bin/activate
+cd "$(dirname "$0")"
+source venv/bin/activate
 exec python -m bot.main

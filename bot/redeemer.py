@@ -10,7 +10,7 @@ Architecture:
 - Writes alerts on successful redemption
 
 Requirements:
-- Builder API credentials in /home/ubuntu/.openclaw/.polymarket-env
+- Builder API credentials in the bot's .polymarket-env file (see config.POLYMARKET_ENV_FILE)
 - Python packages: eth-account, eth-abi, web3, py-builder-signing-sdk
 """
 
@@ -45,7 +45,7 @@ PROXY_INIT_CODE_HASH = "0xd21df8dc65880a8606f09fe0ce3df9b8869287ab0b058be05aa9e8
 
 DEFAULT_GAS_LIMIT = 10_000_000
 
-ENV_FILE = "/home/ubuntu/.openclaw/.polymarket-env"
+ENV_FILE = config.POLYMARKET_ENV_FILE
 REDEMPTIONS_FILE = os.path.join(config.STATE_DIR, "redemptions.json")
 
 # Cooldown: don't attempt redemption more than once per 10 minutes per condition

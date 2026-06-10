@@ -38,7 +38,7 @@ One daemon, modular design, no bloat.
 3. Builds `Portfolio` from raw data → computed P&L
 4. For each position: `resolver.check_resolution()` → won/lost?
 5. For each position: `guardrails.check_position()` → SL/TP triggered?
-6. Any alerts → `alerts.write_alert()` → picked up by OpenClaw
+6. Any alerts → `alerts.write_alert()` → picked up by the alert consumer (notifier/cron)
 7. State saved to `state/positions.json`
 
 ## Key Principles

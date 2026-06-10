@@ -21,7 +21,7 @@ from .logger import log
 
 # ── Config ──────────────────────────────────────────────────────────
 
-_TOKEN_PATH = "/home/ubuntu/.openclaw/.bot-anthropic-token"
+_TOKEN_PATH = config.ANTHROPIC_TOKEN_FILE
 
 # Minimum model tier we consider acceptable for market analysis.
 # Anything below this triggers a warning alert.
@@ -65,22 +65,8 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 # ── Provider: Google Gemini ─────────────────────────────────────────
 
 def _get_gemini_key() -> str:
-    """Return Gemini API key from env or OpenClaw config."""
-    key = os.environ.get("GEMINI_API_KEY", "")
-    if key:
-        return key
-    # Try reading from OpenClaw config
-    try:
-        config_path = os.path.expanduser("~/.openclaw/openclaw.json")
-        with open(config_path) as f:
-            oc = json.load(f)
-        providers = oc.get("models", {}).get("providers", {})
-        for name, prov in providers.items():
-            if "gemini" in name.lower() and prov.get("apiKey"):
-                return prov["apiKey"]
-    except Exception:
-        pass
-    return ""
+    """Return Gemini API key from the GEMINI_API_KEY env var."""
+    return os.environ.get("GEMINI_API_KEY", "")
 
 
 GEMINI_MODEL_CANDIDATES = [

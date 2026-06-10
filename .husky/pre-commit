@@ -1,2 +1,3 @@
 #!/bin/bash
-cd /home/ubuntu/.openclaw/workspace/polymarket-bot && . polymarket-venv/bin/activate && python -m pytest bot/tests/test_smoke.py -q --tb=line
+[ -f venv/bin/activate ] && . venv/bin/activate
+python -m pytest bot/tests/test_smoke.py -q --tb=line

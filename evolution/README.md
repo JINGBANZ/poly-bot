@@ -8,7 +8,7 @@ The conductor is a **pure dispatcher** — it only manages state transitions and
 
 ```
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  OpenClaw    │───▶│  Conductor   │───▶│   GitHub     │
+│  Scheduler   │───▶│  Conductor   │───▶│   GitHub     │
 │  Cron (15m)  │    │  (pure       │    │   API        │
 │              │    │  dispatcher) │    │              │
 └──────┬───────┘    └──────────────┘    └──────────────┘
@@ -187,7 +187,7 @@ Drop a JSON or text file here to request work:
 
 ## Cron Integration
 
-The OpenClaw cron job runs the evolution loop every 15 minutes:
+The cron job runs the evolution loop every 15 minutes:
 
 1. Cron fires → runs `python -m evolution.conductor` in the bot directory
 2. Conductor outputs JSON result to stdout

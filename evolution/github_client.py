@@ -9,9 +9,12 @@ import requests
 from pathlib import Path
 from typing import Optional
 
-REPO = "JINGBANZ/openclaw-poly-bot"
+REPO = os.environ.get("POLY_BOT_REPO", "JINGBANZ/poly-bot")
 API_BASE = "https://api.github.com"
-TOKEN_PATH = os.path.expanduser("~/.openclaw/.github-token")
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOKEN_PATH = os.environ.get(
+    "GITHUB_TOKEN_FILE", os.path.join(_REPO_ROOT, ".secrets", ".github-token")
+)
 
 
 def _get_token() -> str:
