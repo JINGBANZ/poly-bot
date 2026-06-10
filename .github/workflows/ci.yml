@@ -3,7 +3,7 @@ name: CI — Smoke Tests
 on:
   push:
     branches: [main]
-    paths: ['bot/**', 'bot/tests/**']
+    paths: ['bot/**', 'bot/tests/**', 'requirements*.txt', '.github/workflows/ci.yml']
   pull_request:
     branches: [main]
 
