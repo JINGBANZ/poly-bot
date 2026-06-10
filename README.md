@@ -1,28 +1,68 @@
 # Polymarket Trading Bot
 
-Automated trading bot for Polymarket prediction markets. Runs as a systemd daemon on EC2 (t4g.small, eu-west-1).
+Automated trading bot for Polymarket prediction markets. Runs as a systemd daemon, deployed to `/opt/poly-bot`.
+
+## Setup
+
+The bot, its virtualenv, and its secrets all live under one base directory — `/opt/poly-bot` by default. The systemd unit and helper scripts assume this layout.
+
+```bash
+# 1. Clone to the deploy location and take ownership
+sudo git clone https://github.com/JINGBANZ/poly-bot.git /opt/poly-bot
+sudo chown -R "$USER":"$USER" /opt/poly-bot
+cd /opt/poly-bot
+
+# 2. Create the virtualenv (must be at /opt/poly-bot/venv — the service expects it there)
+python3 -m venv venv
+source venv/bin/activate
+
+# 3. Install dependencies
+pip install py-clob-client requests feedparser ddgs web3 eth-account eth-abi py-builder-signing-sdk pytest
+
+# 4. Add trading credentials (git-ignored, lives in .secrets/)
+mkdir -p .secrets
+cat > .secrets/.polymarket-env <<'EOF'
+POLYMARKET_PRIVATE_KEY=...
+POLYMARKET_FUNDER=...
+POLYMARKET_BUILDER_API_KEY=...
+POLYMARKET_BUILDER_API_SECRET=...
+POLYMARKET_BUILDER_PASSPHRASE=...
+X_BEARER_TOKEN=...
+EOF
+chmod 600 .secrets/.polymarket-env
+
+# 5. (optional) LLM keys for research — export in the environment, or drop a token in .secrets/
+#    ANTHROPIC_API_KEY=...   or   GEMINI_API_KEY=...
+
+# 6. Verify, then install the systemd service
+python -m bot.main --once --dry-run            # safe smoke run, executes no trades
+sudo cp polymarket-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polymarket-bot
+```
+
+**Paths are configurable.** Secrets default to `<repo>/.secrets/`; override any of them via the
+`POLYMARKET_ENV_FILE`, `ANTHROPIC_TOKEN_FILE`, `GITHUB_TOKEN_FILE`, or `POLY_BOT_SECRETS_DIR` env vars.
+To deploy somewhere other than `/opt/poly-bot`, adjust `WorkingDirectory`/`EnvironmentFile`/`ExecStart`
+in `polymarket-bot.service` to match.
 
 ## Testing
 
 ```bash
-# Run the full test suite
-source ~/workspace/polymarket-venv/bin/activate
-python3 -m pytest tests/ -v
-
-# Or use the helper script
-./scripts/run_tests.sh
+source /opt/poly-bot/venv/bin/activate
+python -m pytest tests/ -v          # full suite
+python -m pytest bot/tests/test_smoke.py -q   # fast smoke check (used by the pre-commit hook)
 ```
 
-93 tests covering: config sanity, guardrails (stop-loss/take-profit/entry validation), execution (trade logging, circuit breakers), portfolio (P&L, parsing), alerts (dedup, severity), research (adverse selection, verdict parsing), backtest (simulation math), and integration (full dry-run cycle). All external dependencies are mocked.
+The `tests/` suite covers config sanity, guardrails (stop-loss/take-profit/entry validation), execution (trade logging, circuit breakers), portfolio (P&L, parsing), alerts (dedup, severity), research (adverse selection, verdict parsing), backtest (simulation math), and integration (full dry-run cycle). All external dependencies are mocked.
 
 ## Quick Start
 
 ```bash
-# Activate the virtual environment
-source ~/workspace/polymarket-venv/bin/activate
+source /opt/poly-bot/venv/bin/activate
+cd /opt/poly-bot
 
 # Run bot once in dry-run mode (safe test)
-cd ~/workspace/polymarket-bot
 python -m bot.main --once --dry-run
 
 # Start as systemd service
@@ -171,12 +211,14 @@ node scripts/redeem_builder.mjs     # Alternative Node.js redemption
 
 ## Dependencies
 
-Managed via `~/workspace/polymarket-venv`:
+Installed into `/opt/poly-bot/venv` (see [Setup](#setup)):
 - `requests` — HTTP client for all API calls
-- `python-dotenv` — Load credentials from .env file
 - `py-clob-client` — Polymarket CLOB trading client
-- `pandas` — Used by backtest script
-- `web3`, `eth-account` — Blockchain interaction (installed with py-clob-client)
+- `feedparser`, `ddgs` — RSS news + web search for research
+- `web3`, `eth-account`, `eth-abi` — Blockchain interaction
+- `py-builder-signing-sdk` — Builder Relayer signing for gasless redemption
+
+`requirements-test.txt` pins the minimal subset needed for CI/import-time (`pip install -r requirements-test.txt`).
 
 ## systemd Service
 

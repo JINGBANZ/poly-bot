@@ -1,5 +1,18 @@
 # Polymarket Bot — Developer Reference
 
+## Local Setup
+The repo, virtualenv, and secrets share one base directory — `/opt/poly-bot` in production (see the README's [Setup](README.md#setup) for the full deploy walkthrough). For local development, clone anywhere and mirror the layout:
+
+```bash
+git clone https://github.com/JINGBANZ/poly-bot.git && cd poly-bot
+python3 -m venv venv && source venv/bin/activate
+pip install py-clob-client requests feedparser ddgs web3 eth-account eth-abi py-builder-signing-sdk pytest
+mkdir -p .secrets && $EDITOR .secrets/.polymarket-env   # see README → Environment for keys
+python -m pytest bot/tests/test_smoke.py -q              # confirm imports resolve
+```
+
+Paths are derived from the repo root and overridable via `POLYMARKET_ENV_FILE` / `ANTHROPIC_TOKEN_FILE` / `GITHUB_TOKEN_FILE` / `POLY_BOT_SECRETS_DIR` — no absolute paths are hard-coded in the code.
+
 ## Architecture
 Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 minutes.
 
