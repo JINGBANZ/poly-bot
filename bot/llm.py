@@ -1,14 +1,16 @@
 """LLM module — multi-provider integration for market analysis.
 
-Provider priority (fix #57):
-1. Anthropic API key (ANTHROPIC_API_KEY) — sonnet-class models
-2. Google Gemini (GEMINI_API_KEY) — gemini-2.5-flash/pro (sonnet-equivalent+)
-3. Anthropic OAuth token (fallback) — haiku only (degraded)
+Provider priority:
+1. DeepSeek (DEEPSEEK_API_KEY or .secrets/.deepseek-key) — deepseek-chat
+2. Anthropic API key (ANTHROPIC_API_KEY) — sonnet-class models
+3. Google Gemini (GEMINI_API_KEY) — gemini-2.5-flash/pro (sonnet-equivalent+)
+4. Anthropic OAuth token (fallback) — haiku only (degraded)
 
 Uses LLM for:
 1. Market scanning — filter candidates for verifiable edge
 2. Position analysis — hold/sell decisions based on news + price
 3. Trade thesis — generate required 3-sentence thesis before entry
+4. Longshot Hunter entry verdicts (bot/longshot.py AI gate)
 """
 
 import json
@@ -61,6 +63,105 @@ ANTHROPIC_MODEL_CANDIDATES = [
     "claude-3-haiku-20240307",
 ]
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
+# ── Provider: DeepSeek ──────────────────────────────────────────────
+
+def _get_deepseek_key() -> str:
+    """Return DeepSeek API key from DEEPSEEK_API_KEY env var or key file."""
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if key:
+        return key
+    try:
+        with open(config.DEEPSEEK_KEY_FILE) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+DEEPSEEK_MODEL_CANDIDATES = [
+    "deepseek-chat",        # V3 — fast, cheap, fine for verdicts/analysis
+    "deepseek-reasoner",    # R1 — slower fallback
+]
+DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+
+def _probe_deepseek(api_key: str) -> str | None:
+    """Probe DeepSeek models. Returns working model name or None."""
+    headers = {"Authorization": f"Bearer {api_key}",
+               "Content-Type": "application/json"}
+    for model in DEEPSEEK_MODEL_CANDIDATES:
+        try:
+            body = {"model": model, "max_tokens": 5,
+                    "messages": [{"role": "user", "content": "hi"}]}
+            r = requests.post(DEEPSEEK_API_URL, json=body, headers=headers,
+                              timeout=15)
+            if r.status_code == 200 and r.json().get("choices"):
+                return model
+            log(f"ℹ️ LLM: DeepSeek {model} not available (HTTP {r.status_code}), trying next")
+        except Exception as e:
+            log(f"ℹ️ LLM: DeepSeek {model} probe failed: {e}")
+    return None
+
+
+def _call_deepseek(prompt: str, system: str, temperature: float,
+                   max_tokens: int, api_key: str, model: str) -> str | None:
+    """Make a DeepSeek API call (OpenAI-compatible chat completions)."""
+    headers = {"Authorization": f"Bearer {api_key}",
+               "Content-Type": "application/json"}
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            r = requests.post(DEEPSEEK_API_URL, json=body, headers=headers,
+                              timeout=TIMEOUT)
+
+            if r.status_code == 429:
+                log("⚠️ LLM: DeepSeek rate limited, waiting 60s")
+                time.sleep(60)
+                continue
+
+            if r.status_code == 401:
+                log("❌ LLM: DeepSeek auth failed — check DEEPSEEK_API_KEY")
+                return None
+
+            if r.status_code in (400, 404):
+                global _probe_done
+                _probe_done = False
+                log(f"⚠️ LLM: DeepSeek model {model} returned HTTP {r.status_code}, will re-probe")
+                return None
+
+            if r.status_code != 200:
+                log(f"❌ LLM: DeepSeek HTTP {r.status_code}: {r.text[:200]}")
+                if attempt < MAX_RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+
+            data = r.json()
+            choices = data.get("choices", [])
+            if choices:
+                content = (choices[0].get("message", {}) or {}).get("content", "")
+                if content:
+                    return content.strip()
+            log("❌ LLM: DeepSeek returned empty response")
+            return None
+
+        except Exception as e:
+            log(f"❌ LLM: DeepSeek error (attempt {attempt+1}): {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** attempt)
+
+    return None
+
 
 # ── Provider: Google Gemini ─────────────────────────────────────────
 
@@ -264,15 +365,27 @@ def _select_provider() -> bool:
     """Probe all providers and select the best available one.
 
     Priority:
-    1. Anthropic API key (if set) with sonnet-class model
-    2. Google Gemini (if API key available)
-    3. Anthropic OAuth (haiku only — degraded)
+    1. DeepSeek (if API key available)
+    2. Anthropic API key (if set) with sonnet-class model
+    3. Google Gemini (if API key available)
+    4. Anthropic OAuth (haiku only — degraded)
 
     Returns True if a provider was found, False otherwise.
     """
     global _active_provider, _active_model, _probe_done
     if _probe_done:
         return _active_provider is not None
+
+    # 0. Try DeepSeek (preferred provider)
+    deepseek_key = _get_deepseek_key()
+    if deepseek_key:
+        model = _probe_deepseek(deepseek_key)
+        if model:
+            log(f"✅ LLM: Using DeepSeek → {model}")
+            _active_provider = "deepseek"
+            _active_model = model
+            _probe_done = True
+            return True
 
     # 1. Try Anthropic with API key (best option)
     token, auth_type = _get_anthropic_auth()
@@ -319,7 +432,7 @@ def _select_provider() -> bool:
         _warn_degraded_fallback(anthropic_oauth_model)
         return True
 
-    log("❌ LLM: No working provider found (no Anthropic API key, no Gemini key, no OAuth)")
+    log("❌ LLM: No working provider found (no DeepSeek key, no Anthropic API key, no Gemini key, no OAuth)")
     _probe_done = True
     return False
 
@@ -377,7 +490,10 @@ def call(prompt: str, system: str = "", temperature: float = 0.3,
         time.sleep(wait)
     _last_call_ts = time.time()
 
-    if _active_provider == "gemini":
+    if _active_provider == "deepseek":
+        return _call_deepseek(prompt, system, temperature, max_tokens,
+                              _get_deepseek_key(), _active_model)
+    elif _active_provider == "gemini":
         gemini_key = _get_gemini_key()
         return _call_gemini(prompt, system, temperature, max_tokens,
                             gemini_key, _active_model)

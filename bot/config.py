@@ -24,6 +24,7 @@ LOG_FILE = os.path.join(LOGS_DIR, "bot.log")
 SECRETS_DIR = os.environ.get("POLY_BOT_SECRETS_DIR", os.path.join(BASE_DIR, ".secrets"))
 POLYMARKET_ENV_FILE = os.environ.get("POLYMARKET_ENV_FILE", os.path.join(SECRETS_DIR, ".polymarket-env"))
 ANTHROPIC_TOKEN_FILE = os.environ.get("ANTHROPIC_TOKEN_FILE", os.path.join(SECRETS_DIR, ".anthropic-token"))
+DEEPSEEK_KEY_FILE = os.environ.get("DEEPSEEK_KEY_FILE", os.path.join(SECRETS_DIR, ".deepseek-key"))
 GITHUB_TOKEN_FILE = os.environ.get("GITHUB_TOKEN_FILE", os.path.join(SECRETS_DIR, ".github-token"))
 
 # Trading rules
