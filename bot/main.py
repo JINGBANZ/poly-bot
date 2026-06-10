@@ -54,6 +54,23 @@ def _is_dust_position(pos) -> bool:
     """Return True if position value AND cost are both below MIN_REVIEW_VALUE."""
     return pos.value < MIN_REVIEW_VALUE and pos.cost < MIN_REVIEW_VALUE
 
+
+def _is_strategy_held(token_id: str) -> bool:
+    """True if a strategy module owns this position (hold-to-resolution)."""
+    try:
+        from .tipoff90 import is_tipoff90_position
+        if is_tipoff90_position(token_id):
+            return True
+    except Exception:
+        pass
+    try:
+        from .longshot import is_longshot_position
+        if is_longshot_position(token_id):
+            return True
+    except Exception:
+        pass
+    return False
+
 def _state_changed(token_id: str, action: str, detail: str) -> bool:
     """Return True if this is new or changed since last log."""
     now = time.time()
@@ -369,6 +386,17 @@ def run_cycle(dry_run=False) -> dict:
         if verbose:
             log(f"⚠️ Tipoff 90 check: {e}")
 
+    # 0a3. FAST PATH: Longshot Hunter — politics longshots + AI gate (every cycle)
+    # Own entry guardrails + edge-decay auto-disable (bot/longshot.py).
+    try:
+        from .longshot import run_longshot_check
+        longshot_buys = run_longshot_check(dry_run=dry_run)
+        if longshot_buys > 0:
+            log(f"🎯 Longshot Hunter: {longshot_buys} trade(s) executed")
+    except Exception as e:
+        if verbose:
+            log(f"⚠️ Longshot Hunter check: {e}")
+
     # 0b. Manage open limit orders (check fills, cancel stale)
     try:
         manage_open_orders(dry_run=dry_run)
@@ -456,13 +484,13 @@ def run_cycle(dry_run=False) -> dict:
         if _is_dust_position(pos):
             continue
 
-        # Tipoff 90 positions are hold-to-resolution: in-game dips are expected
-        # and must NOT trigger stop-loss/take-profit (the backtested edge is
-        # holding through resolution). Exemption lapses after 48h (postponed
-        # games revert to normal guardrails) — see bot/tipoff90.py.
-        from .tipoff90 import is_tipoff90_position
-        if is_tipoff90_position(pos.token_id):
-            results["TIPOFF90_HOLD"] = results.get("TIPOFF90_HOLD", 0) + 1
+        # Strategy positions (Tipoff 90, Longshot Hunter) are hold-to-resolution:
+        # interim dips are expected and must NOT trigger stop-loss/take-profit
+        # (the backtested edge requires holding through resolution). Exemptions
+        # lapse after each strategy's hold window so stuck positions revert to
+        # normal guardrails — see bot/tipoff90.py and bot/longshot.py.
+        if _is_strategy_held(pos.token_id):
+            results["STRATEGY_HOLD"] = results.get("STRATEGY_HOLD", 0) + 1
             continue
 
         # Guardrail check
@@ -677,10 +705,9 @@ def run_cycle(dry_run=False) -> dict:
                 if _is_dust_position(pos):
                     continue
 
-                # Tipoff 90 positions resolve within hours and are
-                # hold-to-resolution — never LLM-sell them mid-game.
-                from .tipoff90 import is_tipoff90_position as _is_t90
-                if _is_t90(pos.token_id):
+                # Strategy positions are hold-to-resolution — never
+                # LLM-sell them mid-flight.
+                if _is_strategy_held(pos.token_id):
                     continue
 
                 # Noise reduction: skip LLM if price hasn't moved >5% since last analysis

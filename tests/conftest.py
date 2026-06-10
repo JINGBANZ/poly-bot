@@ -25,6 +25,12 @@ def tmp_state_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ALERTS_FILE", str(state / "pending_alerts.jsonl"))
     monkeypatch.setattr(config, "LOG_FILE", str(logs / "bot.log"))
     monkeypatch.setattr(config, "KILL_SWITCH_FILE", str(state / "KILL_SWITCH"))
+
+    # execution.py binds these paths at import time — patch them too, or
+    # tests that call log_trade/track_order write to the REAL state dir.
+    from bot import execution
+    monkeypatch.setattr(execution, "TRADE_LOG", str(state / "trade_log.jsonl"))
+    monkeypatch.setattr(execution, "OPEN_ORDERS_FILE", str(state / "open_orders.json"))
     return tmp_path
 
 

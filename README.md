@@ -140,6 +140,8 @@ python -m bot.main --dry-run    # Don't execute trades
 
 **Tipoff 90 strategy** (`bot/tipoff90.py`): buys NBA pre-game favorites priced 90–96¢ in the last 30 min before tipoff and holds to resolution (exempt from stop-loss/take-profit while open). Has its own entry guardrails, daily cap, and an edge-decay auto-disable. See `analysis/nba_favorites_strategy.md` for the backtest (84/84, +7.5%/trade) and the full guardrail stack. Disable via `state/TIPOFF90_DISABLED` or `TIPOFF90_ENABLED = False`.
 
+**Longshot Hunter strategy** (`bot/longshot.py`): buys politics longshots priced 10–40¢ resolving within 45 days, but only after an LLM verdict confirms a concrete live path (scheduled catalyst / base rate above price); holds to resolution. ~1 entry/day, ~33–45% win rate, wins pay +150–500%. Own guardrails: 3/day cap, 15 max open, one per event, AI gate fails closed without an LLM key, auto-disable if ROI < 0 after 25 resolved trades. See `analysis/longshot_hunter.md`. Disable via `state/LONGSHOT_DISABLED` or `LONGSHOT_ENABLED = False`.
+
 ## Dependencies
 
 Declared in `requirements.txt`, installed into `/opt/poly-bot/venv` (see [Setup](#setup)):
