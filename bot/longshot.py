@@ -38,8 +38,8 @@ import requests
 from . import config
 from .api import get_book, best_ask, best_bid
 from .alerts import write_alert
-from .execution import (check_circuit_breakers, get_today_trades,
-                        get_usdc_balance, log_trade, order_succeeded)
+from .execution import (check_circuit_breakers, execute_strategy_buy,
+                        get_today_trades, get_usdc_balance)
 from .logger import log
 
 MIN_ORDER_USD = 1.00  # Polymarket FOK market-order minimum
@@ -371,19 +371,12 @@ def run_longshot_check(dry_run: bool = False) -> int:
                     f"(${order_usd:.2f})")
                 break
 
-            from .api import market_buy
-            result = market_buy(token_id, order_usd)
-            if order_succeeded(result):
-                shares = round(order_usd / ask, 4)
-                log(f"  🎯 ✅ LONGSHOT BUY: {label} @ {ask:.2f} "
-                    f"(${order_usd:.2f}, resolves in {days_to_end:.0f}d)")
-                write_alert(f"🎯 LONGSHOT BUY: {question}\n"
-                            f"{outcomes[idx]} @ {ask:.2f}, ${order_usd:.2f}\n"
-                            f"{verdict[:200]}\nHold to resolution "
-                            f"(~{days_to_end:.0f}d)")
-                log_trade("BUY", question, ask, shares, amount_usd=order_usd,
-                          reason="LONGSHOT", token_id=token_id,
-                          thesis=verdict[:300])
+            result = execute_strategy_buy(
+                token_id, order_usd, question, reason="LONGSHOT",
+                entry_price=ask, thesis=verdict[:300])
+            if result.get("success"):
+                shares = result["shares"]
+                log(f"  🎯 resolves in {days_to_end:.0f}d, holding to resolution")
                 state["trades"].append({
                     "market_id": mid, "token_id": token_id,
                     "outcome_index": idx, "question": question,
@@ -396,8 +389,6 @@ def run_longshot_check(dry_run: bool = False) -> int:
                 _save_state(state)
                 open_events.add(ev_slug)
                 buys += 1
-            else:
-                log(f"  🎯 ❌ LONGSHOT buy failed: {label}: {result}")
             break  # at most one side can be in band; done with this market
 
     return buys

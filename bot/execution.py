@@ -273,6 +273,42 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         return {"success": False, "result": result}
 
 
+def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
+                         reason: str, entry_price: float,
+                         thesis: str = "") -> dict:
+    """Buy pipeline for self-guarded strategy modules (Tipoff 90, Longshot).
+
+    Unlike execute_buy, this does NOT apply the cheap-side guards (85c
+    ceiling, value zone, R:R, duration) — those encode the legacy longshot
+    strategy and would reject every strategy entry. Callers MUST implement
+    their own entry validation (price band, spread, depth, sizing) before
+    calling. What this centralizes: order placement, success detection,
+    trade logging, and alerting — the things that rotted when duplicated.
+    """
+    from .api import market_buy
+    from .alerts import write_alert
+
+    if amount_usd <= 0:
+        log(f"  🛑 EXECUTION GUARD: amount_usd={amount_usd} is non-positive. Refusing buy.")
+        return {"success": False, "error": "Non-positive buy amount"}
+    if not (0 < entry_price < 1):
+        log(f"  🛑 EXECUTION GUARD: entry_price={entry_price} outside (0,1). Refusing buy.")
+        return {"success": False, "error": f"Invalid entry price {entry_price}"}
+
+    result = market_buy(token_id, amount_usd)
+    if order_succeeded(result):
+        shares = round(amount_usd / entry_price, 4)
+        log(f"  ✅ Bought ({reason}): {market_name[:50]} — ${amount_usd:.2f} @ {entry_price:.2f}")
+        write_alert(f"🚀 BOUGHT ({reason}): {market_name}\n"
+                    f"${amount_usd:.2f} @ {entry_price:.2f}\n{thesis[:200]}")
+        log_trade("BUY", market_name, entry_price, shares,
+                  amount_usd=amount_usd, reason=reason, thesis=thesis,
+                  token_id=token_id)
+        return {"success": True, "result": result, "shares": shares}
+    log(f"  ❌ Buy failed ({reason}): {market_name[:50]}: {result}")
+    return {"success": False, "result": result}
+
+
 def is_sell_on_cooldown(token_id: str) -> bool:
     """Check if a token was recently sold and is still on cooldown (fix #29).
     

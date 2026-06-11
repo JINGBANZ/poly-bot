@@ -35,8 +35,8 @@ import requests
 from . import config
 from .api import get_book, best_ask, best_bid
 from .alerts import write_alert
-from .execution import (check_circuit_breakers, get_today_trades,
-                        get_usdc_balance, log_trade, order_succeeded)
+from .execution import (check_circuit_breakers, execute_strategy_buy,
+                        get_today_trades, get_usdc_balance)
 from .logger import log
 
 MIN_ORDER_USD = 1.00  # Polymarket FOK market-order minimum
@@ -324,20 +324,16 @@ def run_tipoff90_check(dry_run: bool = False) -> int:
                     f"(${order_usd:.2f})")
                 break
 
-            from .api import market_buy
-            result = market_buy(token_id, order_usd)
-            if order_succeeded(result):
-                shares = round(order_usd / ask, 4)
-                log(f"  🏀 ✅ TIPOFF90 BUY: {label} @ {ask:.2f} "
-                    f"(${order_usd:.2f}, tip in {m.get('_mins_to_tip', 0):.0f}min)")
-                write_alert(f"🏀 TIPOFF90 BUY: {question}\n"
-                            f"{outcomes[idx]} @ {ask:.2f}, ${order_usd:.2f}\n"
-                            f"Hold to resolution (~4h)")
-                log_trade("BUY", question, ask, shares, amount_usd=order_usd,
-                          reason="TIPOFF90", token_id=token_id,
-                          thesis=f"NBA pre-game favorite {ask:.2f} in "
-                                 f"[{config.TIPOFF90_BAND_LO},{config.TIPOFF90_BAND_HI}) "
-                                 f"band, hold to resolution")
+            result = execute_strategy_buy(
+                token_id, order_usd, question, reason="TIPOFF90",
+                entry_price=ask,
+                thesis=f"NBA pre-game favorite {ask:.2f} in "
+                       f"[{config.TIPOFF90_BAND_LO},{config.TIPOFF90_BAND_HI}) "
+                       f"band, hold to resolution (~4h)")
+            if result.get("success"):
+                shares = result["shares"]
+                log(f"  🏀 tip in {m.get('_mins_to_tip', 0):.0f}min, "
+                    f"holding to resolution")
                 state["trades"].append({
                     "market_id": mid, "token_id": token_id,
                     "outcome_index": idx, "question": question,
@@ -348,8 +344,6 @@ def run_tipoff90_check(dry_run: bool = False) -> int:
                 })
                 _save_state(state)
                 buys += 1
-            else:
-                log(f"  🏀 ❌ TIPOFF90 buy failed: {label}: {result}")
             break  # only one side per game can be in band; stop either way
 
     return buys
