@@ -1,7 +1,7 @@
 # Polymarket Bot — Developer Reference
 
 ## Local Setup
-The repo, virtualenv, and secrets share one base directory — `/opt/poly-bot` in production (see the README's [Setup](README.md#setup) for the full deploy walkthrough). For local development, clone anywhere and mirror the layout:
+The repo, virtualenv, and secrets share one base directory — the repo root itself; the bot runs directly from the clone (see the README's [Setup](README.md#setup)). Clone anywhere:
 
 ```bash
 git clone https://github.com/JINGBANZ/poly-bot.git && cd poly-bot
@@ -14,7 +14,7 @@ python -m pytest bot/tests/test_smoke.py -q              # confirm imports resol
 Paths are derived from the repo root and overridable via `POLYMARKET_ENV_FILE` / `ANTHROPIC_TOKEN_FILE` / `GITHUB_TOKEN_FILE` / `POLY_BOT_SECRETS_DIR` — no absolute paths are hard-coded in the code.
 
 ## Architecture
-Daemon service (`polymarket-bot.service`) runs `bot/main.py` in a loop every 5 minutes.
+The daemon (`./start_daemon.sh`, or optionally the `polymarket-bot.service` systemd unit) runs `bot/main.py` in a loop every 5 minutes.
 
 ## Module Map
 | Module | Purpose |

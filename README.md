@@ -1,18 +1,17 @@
 # Polymarket Trading Bot
 
-Automated trading bot for Polymarket prediction markets. Runs as a systemd daemon, deployed to `/opt/poly-bot`.
+Automated trading bot for Polymarket prediction markets. Runs directly from the repository — no system-level install needed.
 
 ## Setup
 
-The bot, its virtualenv, and its secrets all live under one base directory — `/opt/poly-bot` by default. The systemd unit and helper scripts assume this layout.
+Everything lives inside the repo: the virtualenv (`venv/`), secrets (`.secrets/`), runtime state (`state/`), and logs (`logs/`). All paths are relative to the repo root, so the clone can sit anywhere.
 
 ```bash
-# 1. Clone to the deploy location and take ownership
-sudo git clone https://github.com/JINGBANZ/poly-bot.git /opt/poly-bot
-sudo chown -R "$USER":"$USER" /opt/poly-bot
-cd /opt/poly-bot
+# 1. Clone anywhere you like
+git clone https://github.com/JINGBANZ/poly-bot.git
+cd poly-bot
 
-# 2. Create the virtualenv (must be at /opt/poly-bot/venv — the service expects it there)
+# 2. Create the virtualenv inside the repo
 python3 -m venv venv
 source venv/bin/activate
 
@@ -36,22 +35,24 @@ chmod 600 .secrets/.polymarket-env
 #    DEEPSEEK_API_KEY=...  (or: echo "sk-..." > .secrets/.deepseek-key)
 #    Fallbacks: ANTHROPIC_API_KEY=...   or   GEMINI_API_KEY=...
 
-# 6. Verify, then install the systemd service
+# 6. Verify, then start the daemon
 python -m bot.main --once --dry-run            # safe smoke run, executes no trades
-sudo cp polymarket-bot.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now polymarket-bot
+set -a; source .secrets/.polymarket-env; set +a
+./start_daemon.sh                              # runs the daemon in the foreground
+# (for a background run: nohup ./start_daemon.sh >> logs/daemon.out 2>&1 &)
 ```
 
 **Paths are configurable.** Secrets default to `<repo>/.secrets/`; override any of them via the
-`POLYMARKET_ENV_FILE`, `ANTHROPIC_TOKEN_FILE`, `GITHUB_TOKEN_FILE`, or `POLY_BOT_SECRETS_DIR` env vars.
-To deploy somewhere other than `/opt/poly-bot`, adjust `WorkingDirectory`/`EnvironmentFile`/`ExecStart`
-in `polymarket-bot.service` to match.
+`POLYMARKET_ENV_FILE`, `ANTHROPIC_TOKEN_FILE`, `DEEPSEEK_KEY_FILE`, `GITHUB_TOKEN_FILE`, or
+`POLY_BOT_SECRETS_DIR` env vars.
+
+**Run exactly one live instance per wallet.** Two clones trading the same wallet will double-trade
+and fight over exits. Touch `state/KILL_SWITCH` to halt trading instantly.
 
 ## Testing
 
 ```bash
-source /opt/poly-bot/venv/bin/activate
+source venv/bin/activate
 python -m pytest tests/ -v          # full suite
 python -m pytest bot/tests/test_smoke.py -q   # fast smoke check (used by the pre-commit hook)
 ```
@@ -61,14 +62,15 @@ The `tests/` suite covers config sanity, guardrails (stop-loss/take-profit/entry
 ## Quick Start
 
 ```bash
-source /opt/poly-bot/venv/bin/activate
-cd /opt/poly-bot
+cd <repo>
+source venv/bin/activate
 
 # Run bot once in dry-run mode (safe test)
 python -m bot.main --once --dry-run
 
-# Start as systemd service
-sudo systemctl start polymarket-bot
+# Run the daemon (loops every 5 min)
+set -a; source .secrets/.polymarket-env; set +a
+./start_daemon.sh
 ```
 
 ## Environment
@@ -146,7 +148,7 @@ python -m bot.main --dry-run    # Don't execute trades
 
 ## Dependencies
 
-Declared in `requirements.txt`, installed into `/opt/poly-bot/venv` (see [Setup](#setup)):
+Declared in `requirements.txt`, installed into the repo-local `venv/` (see [Setup](#setup)):
 - `requests` — HTTP client for all API calls
 - `py-clob-client` — Polymarket CLOB trading client
 - `feedparser`, `ddgs`, `python-dateutil` — RSS news + web search for research
@@ -155,13 +157,16 @@ Declared in `requirements.txt`, installed into `/opt/poly-bot/venv` (see [Setup]
 
 `requirements-test.txt` adds `pytest` on top of `requirements.txt` for CI (`pip install -r requirements-test.txt`).
 
-## systemd Service
+## systemd Service (optional)
+
+Not required — `./start_daemon.sh` runs the bot from the repo. If you want the bot
+supervised by systemd (auto-restart, start on boot), edit `polymarket-bot.service`
+so `WorkingDirectory`, `EnvironmentFile`, and the two `Exec*` lines point at your
+clone, then:
 
 ```bash
-sudo systemctl start polymarket-bot
-sudo systemctl stop polymarket-bot
-sudo systemctl status polymarket-bot
+sudo cp polymarket-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now polymarket-bot
 sudo journalctl -u polymarket-bot -f   # Live logs
 ```
-
-Service file: `polymarket-bot.service`
