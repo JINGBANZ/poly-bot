@@ -53,6 +53,15 @@ class TestProbeAndCall:
     def test_probe_returns_first_working_model(self, monkeypatch):
         monkeypatch.setattr(llm.requests, "post",
                             lambda *a, **k: FakeResponse(_ok_completion("hi")))
+        assert llm._probe_deepseek("k") == "deepseek-v4-flash"
+
+    def test_probe_falls_back_to_legacy_alias(self, monkeypatch):
+        def fake_post(url, json=None, headers=None, timeout=None):
+            if json["model"].startswith("deepseek-v4"):
+                return FakeResponse({}, status=404)
+            return FakeResponse(_ok_completion("hi"))
+
+        monkeypatch.setattr(llm.requests, "post", fake_post)
         assert llm._probe_deepseek("k") == "deepseek-chat"
 
     def test_probe_failure_returns_none(self, monkeypatch):

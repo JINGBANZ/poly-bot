@@ -79,8 +79,9 @@ def _get_deepseek_key() -> str:
 
 
 DEEPSEEK_MODEL_CANDIDATES = [
-    "deepseek-chat",        # V3 — fast, cheap, fine for verdicts/analysis
-    "deepseek-reasoner",    # R1 — slower fallback
+    "deepseek-v4-flash",    # V4 fast/economical — right tier for verdicts
+    "deepseek-v4-pro",      # V4 flagship — fallback if flash unavailable
+    "deepseek-chat",        # legacy alias (routes to v4-flash; dies 2026-07-24)
 ]
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 
