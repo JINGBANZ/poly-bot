@@ -18,33 +18,23 @@ source venv/bin/activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Add trading credentials (git-ignored, lives in .secrets/)
-mkdir -p .secrets
-cat > .secrets/.polymarket-env <<'EOF'
-POLYMARKET_PRIVATE_KEY=...
-POLYMARKET_FUNDER=...
-POLYMARKET_BUILDER_API_KEY=...
-POLYMARKET_BUILDER_API_SECRET=...
-POLYMARKET_BUILDER_PASSPHRASE=...
-X_BEARER_TOKEN=...
-EOF
-chmod 600 .secrets/.polymarket-env
+# 4. Add ALL credentials in one centralized .env at the repo root (git-ignored).
+#    The bot loads it automatically at startup — no sourcing or exporting needed.
+cp .env.example .env
+$EDITOR .env          # fill in POLYMARKET_* keys + DEEPSEEK_API_KEY
+chmod 600 .env
 
-# 5. LLM key for research + Longshot Hunter AI gate — export in the environment,
-#    or drop a key in .secrets/. DeepSeek is the preferred provider:
-#    DEEPSEEK_API_KEY=...  (or: echo "sk-..." > .secrets/.deepseek-key)
-#    Fallbacks: ANTHROPIC_API_KEY=...   or   GEMINI_API_KEY=...
-
-# 6. Verify, then start the daemon
+# 5. Verify, then start the daemon
 python -m bot.main --once --dry-run            # safe smoke run, executes no trades
-set -a; source .secrets/.polymarket-env; set +a
 ./start_daemon.sh                              # runs the daemon in the foreground
 # (for a background run: nohup ./start_daemon.sh >> logs/daemon.out 2>&1 &)
 ```
 
-**Paths are configurable.** Secrets default to `<repo>/.secrets/`; override any of them via the
-`POLYMARKET_ENV_FILE`, `ANTHROPIC_TOKEN_FILE`, `DEEPSEEK_KEY_FILE`, `GITHUB_TOKEN_FILE`, or
-`POLY_BOT_SECRETS_DIR` env vars.
+**One file, all secrets.** `.env` holds the wallet keys, builder API creds, and LLM keys
+(`DEEPSEEK_API_KEY` preferred; `ANTHROPIC_API_KEY`/`GEMINI_API_KEY` fallbacks) — see
+`.env.example` for the full template. Real environment variables always take precedence
+over `.env` values. Override the file location with `POLY_BOT_ENV_FILE`; legacy
+`.secrets/` per-file paths still work as fallbacks.
 
 **Run exactly one live instance per wallet.** Two clones trading the same wallet will double-trade
 and fight over exits. Touch `state/KILL_SWITCH` to halt trading instantly.
@@ -68,17 +58,18 @@ source venv/bin/activate
 # Run bot once in dry-run mode (safe test)
 python -m bot.main --once --dry-run
 
-# Run the daemon (loops every 5 min)
-set -a; source .secrets/.polymarket-env; set +a
+# Run the daemon (loops every 5 min; reads .env automatically)
 ./start_daemon.sh
 ```
 
 ## Environment
 
-Credentials loaded from `.secrets/.polymarket-env` (override path via the `POLYMARKET_ENV_FILE` env var):
+All credentials live in `<repo>/.env` (template: `.env.example`; override path via
+`POLY_BOT_ENV_FILE`). Loaded automatically by `bot/config.py` at startup:
 - `POLYMARKET_PRIVATE_KEY` — EOA private key
 - `POLYMARKET_FUNDER` — Proxy wallet address
 - `POLYMARKET_BUILDER_API_KEY` / `POLYMARKET_BUILDER_API_SECRET` / `POLYMARKET_BUILDER_PASSPHRASE` — Builder API for gasless transactions
+- `DEEPSEEK_API_KEY` — LLM for the Longshot Hunter AI gate + research (preferred; `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` as fallbacks)
 - `X_BEARER_TOKEN` — Twitter/X API bearer token (for news monitoring)
 
 **Wallet addresses:**

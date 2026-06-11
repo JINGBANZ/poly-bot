@@ -20,7 +20,40 @@ POS_FILE = os.path.join(STATE_DIR, "positions.json")
 ALERTS_FILE = os.path.join(STATE_DIR, "pending_alerts.jsonl")
 LOG_FILE = os.path.join(LOGS_DIR, "bot.log")
 
-# Secrets / credentials — default to <repo>/.secrets/, override via env vars.
+# Credentials — ONE centralized env file at the repo root: <repo>/.env
+# (git-ignored). Holds ALL secrets: POLYMARKET_* wallet/builder keys,
+# DEEPSEEK_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY, X_BEARER_TOKEN, etc.
+# Loaded into os.environ below at import time (real env vars always win).
+ENV_FILE = os.environ.get("POLY_BOT_ENV_FILE", os.path.join(BASE_DIR, ".env"))
+
+
+def load_env_file(path: str = None):
+    """Load KEY=VALUE lines from the env file into os.environ.
+
+    Uses setdefault: variables already present in the environment are never
+    overwritten. Missing file is a no-op. Returns number of vars loaded.
+    """
+    path = path or ENV_FILE
+    loaded = 0
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key, val = key.strip(), val.strip().strip('"').strip("'")
+                if key and os.environ.setdefault(key, val) == val:
+                    loaded += 1
+    except OSError:
+        pass
+    return loaded
+
+
+load_env_file()
+
+# Legacy per-file secret paths — still honored as fallbacks for setups that
+# kept a .secrets/ directory; new setups should put everything in .env.
 SECRETS_DIR = os.environ.get("POLY_BOT_SECRETS_DIR", os.path.join(BASE_DIR, ".secrets"))
 POLYMARKET_ENV_FILE = os.environ.get("POLYMARKET_ENV_FILE", os.path.join(SECRETS_DIR, ".polymarket-env"))
 ANTHROPIC_TOKEN_FILE = os.environ.get("ANTHROPIC_TOKEN_FILE", os.path.join(SECRETS_DIR, ".anthropic-token"))

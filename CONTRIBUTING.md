@@ -7,11 +7,11 @@ The repo, virtualenv, and secrets share one base directory — the repo root its
 git clone https://github.com/JINGBANZ/poly-bot.git && cd poly-bot
 python3 -m venv venv && source venv/bin/activate
 pip install py-clob-client requests feedparser ddgs web3 eth-account eth-abi py-builder-signing-sdk pytest
-mkdir -p .secrets && $EDITOR .secrets/.polymarket-env   # see README → Environment for keys
+cp .env.example .env && $EDITOR .env                     # ALL credentials in one file (see README → Environment)
 python -m pytest bot/tests/test_smoke.py -q              # confirm imports resolve
 ```
 
-Paths are derived from the repo root and overridable via `POLYMARKET_ENV_FILE` / `ANTHROPIC_TOKEN_FILE` / `GITHUB_TOKEN_FILE` / `POLY_BOT_SECRETS_DIR` — no absolute paths are hard-coded in the code.
+Paths are derived from the repo root; the centralized `.env` location is overridable via `POLY_BOT_ENV_FILE` (legacy `.secrets/` per-file paths still work) — no absolute paths are hard-coded in the code.
 
 ## Architecture
 The daemon (`./start_daemon.sh`, or optionally the `polymarket-bot.service` systemd unit) runs `bot/main.py` in a loop every 5 minutes.
