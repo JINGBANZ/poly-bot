@@ -221,7 +221,9 @@ def _ai_verdict(market: dict, outcome: str, ask: float,
     week_chg = market.get("oneWeekPriceChange")
     week_line = (f"\n7-day price change: {float(week_chg):+.2f}"
                  if week_chg is not None else "")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prompt = (
+        f"Today's date: {today}\n"
         f"Market: {market.get('question', '?')}\n"
         f"Candidate outcome: {outcome}\n"
         f"Current ask: {ask:.2f} (market implies ~{ask:.0%} chance)\n"

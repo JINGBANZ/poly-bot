@@ -119,6 +119,11 @@ def _call_deepseek(prompt: str, system: str, temperature: float,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    # V4 models default to thinking mode, which burns the completion budget
+    # on reasoning_content and can leave content empty at small max_tokens.
+    # Our calls are short verdicts/analyses — non-thinking is right.
+    if model.startswith("deepseek-v4"):
+        body["thinking"] = {"type": "disabled"}
 
     for attempt in range(MAX_RETRIES + 1):
         try:

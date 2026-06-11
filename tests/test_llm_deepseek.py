@@ -85,6 +85,20 @@ class TestProbeAndCall:
         assert captured["headers"]["Authorization"] == "Bearer k"
         assert captured["body"]["messages"][0] == {"role": "system", "content": "system"}
         assert captured["body"]["messages"][1] == {"role": "user", "content": "prompt"}
+        # legacy alias must NOT get the V4-only thinking parameter
+        assert "thinking" not in captured["body"]
+
+    def test_v4_models_disable_thinking(self, monkeypatch):
+        captured = {}
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            captured["body"] = json
+            return FakeResponse(_ok_completion("WORKING"))
+
+        monkeypatch.setattr(llm.requests, "post", fake_post)
+        out = llm._call_deepseek("p", "", 0.2, 50, "k", "deepseek-v4-flash")
+        assert out == "WORKING"
+        assert captured["body"]["thinking"] == {"type": "disabled"}
 
     def test_call_auth_failure_returns_none(self, monkeypatch):
         monkeypatch.setattr(llm.requests, "post",
