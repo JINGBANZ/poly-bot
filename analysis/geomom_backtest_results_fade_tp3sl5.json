@@ -1,0 +1,650 @@
+{
+  "generated": "2026-06-12T07:19:07Z",
+  "days": 15,
+  "mode": "FADE",
+  "tp_c": 3.0,
+  "sl_c": 5.0,
+  "universe": 147,
+  "with_data": 104,
+  "results": {
+    "trig2c_delay0m": {
+      "n": 703,
+      "mean_net_c": -0.27,
+      "median_net_c": -0.5,
+      "win_rate": 0.444,
+      "total_net_usd_at_2usd": -13.82,
+      "exit_reasons": {
+        "tp": 268,
+        "timeout": 335,
+        "end_of_data": 9,
+        "sl": 91
+      },
+      "mean_hold_min": 157,
+      "subwindow_mean_c": {
+        "w1": -0.25,
+        "w2": -0.93,
+        "w3": -0.1
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          85
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          50
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          31
+        ],
+        [
+          "Bab el-Mandeb Strait effectively closed ",
+          30
+        ],
+        [
+          "Strait of Hormuz traffic returns to norm",
+          29
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "forward_mean_c": {
+        "f30": -0.36,
+        "f60": -0.67,
+        "f120": -0.82,
+        "f240": -0.82
+      },
+      "n_signals_raw": 8652
+    },
+    "trig2c_delay5m": {
+      "n": 712,
+      "mean_net_c": -0.19,
+      "median_net_c": -0.5,
+      "win_rate": 0.447,
+      "total_net_usd_at_2usd": -8.87,
+      "exit_reasons": {
+        "tp": 275,
+        "timeout": 342,
+        "end_of_data": 11,
+        "sl": 84
+      },
+      "mean_hold_min": 157,
+      "subwindow_mean_c": {
+        "w1": -0.27,
+        "w2": -1.0,
+        "w3": 0.07
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          84
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          51
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          32
+        ],
+        [
+          "Strait of Hormuz traffic returns to norm",
+          31
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          30
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "trades_sample": [
+        {
+          "t_entry": 1781199900,
+          "direction": -1,
+          "entry": 0.295,
+          "exit": 0.17,
+          "net_c": -12.5,
+          "reason": "sl",
+          "hold_min": 20,
+          "mfe_c": 2.5,
+          "mae_c": -11.5,
+          "fees_c": 0.0,
+          "market": "US x Iran diplomatic meeting by July 31, 2026?"
+        },
+        {
+          "t_entry": 1781230800,
+          "direction": 1,
+          "entry": 0.194,
+          "exit": 0.0735,
+          "net_c": -12.05,
+          "reason": "sl",
+          "hold_min": 15,
+          "mfe_c": 0.1,
+          "mae_c": -11.05,
+          "fees_c": 0.0,
+          "market": "US announces new Iran agreement/ceasefire extension by June "
+        },
+        {
+          "t_entry": 1779956400,
+          "direction": 1,
+          "entry": 0.305,
+          "exit": 0.2,
+          "net_c": -10.5,
+          "reason": "sl",
+          "hold_min": 30,
+          "mfe_c": 0.5,
+          "mae_c": -9.5,
+          "fees_c": 0.0,
+          "market": "Israel closes its airspace by June 15?"
+        },
+        {
+          "t_entry": 1780959000,
+          "direction": 1,
+          "entry": 0.13,
+          "exit": 0.48,
+          "net_c": 35.0,
+          "reason": "tp",
+          "hold_min": 30,
+          "mfe_c": 36.0,
+          "mae_c": -2.0,
+          "fees_c": 0.0,
+          "market": "Bab el-Mandeb Strait effectively closed by June 22?"
+        },
+        {
+          "t_entry": 1779996000,
+          "direction": -1,
+          "entry": 0.305,
+          "exit": 0.52,
+          "net_c": 21.5,
+          "reason": "tp",
+          "hold_min": 115,
+          "mfe_c": 22.5,
+          "mae_c": -3.5,
+          "fees_c": 0.0,
+          "market": "Will Trump agree to Iranian oil sanction relief by June 30?"
+        },
+        {
+          "t_entry": 1780952700,
+          "direction": 1,
+          "entry": 0.11,
+          "exit": 0.315,
+          "net_c": 20.5,
+          "reason": "tp",
+          "hold_min": 15,
+          "mfe_c": 21.5,
+          "mae_c": 0.0,
+          "fees_c": 0.0,
+          "market": "Israel closes its airspace by June 14?"
+        }
+      ]
+    },
+    "trig2c_delay10m": {
+      "n": 704,
+      "mean_net_c": -0.22,
+      "median_net_c": -0.5,
+      "win_rate": 0.44,
+      "total_net_usd_at_2usd": -4.89,
+      "exit_reasons": {
+        "tp": 265,
+        "sl": 86,
+        "timeout": 344,
+        "end_of_data": 9
+      },
+      "mean_hold_min": 158,
+      "subwindow_mean_c": {
+        "w1": -0.26,
+        "w2": -1.0,
+        "w3": 0.01
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          82
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          51
+        ],
+        [
+          "Strait of Hormuz traffic returns to norm",
+          31
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          31
+        ],
+        [
+          "Bab el-Mandeb Strait effectively closed ",
+          31
+        ]
+      ],
+      "mean_fees_c": 0.0
+    },
+    "trig3c_delay0m": {
+      "n": 458,
+      "mean_net_c": 0.13,
+      "median_net_c": 0.5,
+      "win_rate": 0.513,
+      "total_net_usd_at_2usd": 5.77,
+      "exit_reasons": {
+        "sl": 65,
+        "tp": 206,
+        "timeout": 181,
+        "end_of_data": 6
+      },
+      "mean_hold_min": 139,
+      "subwindow_mean_c": {
+        "w1": 0.3,
+        "w2": -0.54,
+        "w3": 0.12
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          58
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          32
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          23
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          22
+        ],
+        [
+          "Bab el-Mandeb Strait effectively closed ",
+          18
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "forward_mean_c": {
+        "f30": -0.61,
+        "f60": -1.09,
+        "f120": -1.27,
+        "f240": -1.28
+      },
+      "n_signals_raw": 4538
+    },
+    "trig3c_delay5m": {
+      "n": 452,
+      "mean_net_c": 0.18,
+      "median_net_c": 0.5,
+      "win_rate": 0.515,
+      "total_net_usd_at_2usd": 8.36,
+      "exit_reasons": {
+        "timeout": 176,
+        "tp": 206,
+        "sl": 64,
+        "end_of_data": 6
+      },
+      "mean_hold_min": 138,
+      "subwindow_mean_c": {
+        "w1": 0.18,
+        "w2": -1.31,
+        "w3": 0.4
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          58
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          30
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          23
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          23
+        ],
+        [
+          "Bab el-Mandeb Strait effectively closed ",
+          18
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "trades_sample": [
+        {
+          "t_entry": 1781199900,
+          "direction": -1,
+          "entry": 0.295,
+          "exit": 0.17,
+          "net_c": -12.5,
+          "reason": "sl",
+          "hold_min": 20,
+          "mfe_c": 2.5,
+          "mae_c": -11.5,
+          "fees_c": 0.0,
+          "market": "US x Iran diplomatic meeting by July 31, 2026?"
+        },
+        {
+          "t_entry": 1781230800,
+          "direction": 1,
+          "entry": 0.194,
+          "exit": 0.0735,
+          "net_c": -12.05,
+          "reason": "sl",
+          "hold_min": 15,
+          "mfe_c": 0.1,
+          "mae_c": -11.05,
+          "fees_c": 0.0,
+          "market": "US announces new Iran agreement/ceasefire extension by June "
+        },
+        {
+          "t_entry": 1781110800,
+          "direction": 1,
+          "entry": 0.315,
+          "exit": 0.22,
+          "net_c": -9.5,
+          "reason": "sl",
+          "hold_min": 10,
+          "mfe_c": 0.0,
+          "mae_c": -8.5,
+          "fees_c": 0.0,
+          "market": "Will Trump restart Project Freedom by June 30?"
+        },
+        {
+          "t_entry": 1780959000,
+          "direction": 1,
+          "entry": 0.13,
+          "exit": 0.48,
+          "net_c": 35.0,
+          "reason": "tp",
+          "hold_min": 30,
+          "mfe_c": 36.0,
+          "mae_c": -2.0,
+          "fees_c": 0.0,
+          "market": "Bab el-Mandeb Strait effectively closed by June 22?"
+        },
+        {
+          "t_entry": 1779996300,
+          "direction": -1,
+          "entry": 0.28,
+          "exit": 0.52,
+          "net_c": 24.0,
+          "reason": "tp",
+          "hold_min": 110,
+          "mfe_c": 25.0,
+          "mae_c": -1.0,
+          "fees_c": 0.0,
+          "market": "Will Trump agree to Iranian oil sanction relief by June 30?"
+        },
+        {
+          "t_entry": 1780859100,
+          "direction": -1,
+          "entry": 0.32,
+          "exit": 0.545,
+          "net_c": 22.5,
+          "reason": "tp",
+          "hold_min": 5,
+          "mfe_c": 23.5,
+          "mae_c": 0.0,
+          "fees_c": 0.0,
+          "market": "Israel closes its airspace by June 30?"
+        }
+      ]
+    },
+    "trig3c_delay10m": {
+      "n": 445,
+      "mean_net_c": -0.16,
+      "median_net_c": 0.0,
+      "win_rate": 0.499,
+      "total_net_usd_at_2usd": 6.5,
+      "exit_reasons": {
+        "sl": 71,
+        "tp": 193,
+        "timeout": 177,
+        "end_of_data": 4
+      },
+      "mean_hold_min": 141,
+      "subwindow_mean_c": {
+        "w1": -0.2,
+        "w2": -1.28,
+        "w3": 0.04
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          56
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          31
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          23
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          22
+        ],
+        [
+          "Bab el-Mandeb Strait effectively closed ",
+          18
+        ]
+      ],
+      "mean_fees_c": 0.0
+    },
+    "trig4c_delay0m": {
+      "n": 307,
+      "mean_net_c": 0.47,
+      "median_net_c": 2.0,
+      "win_rate": 0.56,
+      "total_net_usd_at_2usd": 16.77,
+      "exit_reasons": {
+        "tp": 160,
+        "timeout": 93,
+        "sl": 52,
+        "end_of_data": 2
+      },
+      "mean_hold_min": 117,
+      "subwindow_mean_c": {
+        "w1": 0.69,
+        "w2": -0.11,
+        "w3": 0.4
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          44
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          22
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          16
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          15
+        ],
+        [
+          "Trump announces US x Iran ceasefire over",
+          12
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "forward_mean_c": {
+        "f30": -0.87,
+        "f60": -1.61,
+        "f120": -1.79,
+        "f240": -1.87
+      },
+      "n_signals_raw": 2474
+    },
+    "trig4c_delay5m": {
+      "n": 298,
+      "mean_net_c": 0.28,
+      "median_net_c": 1.5,
+      "win_rate": 0.544,
+      "total_net_usd_at_2usd": 8.94,
+      "exit_reasons": {
+        "tp": 148,
+        "timeout": 93,
+        "sl": 55,
+        "end_of_data": 2
+      },
+      "mean_hold_min": 122,
+      "subwindow_mean_c": {
+        "w1": 0.33,
+        "w2": -1.66,
+        "w3": 0.47
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          43
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          20
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          16
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          15
+        ],
+        [
+          "Trump announces US x Iran ceasefire over",
+          11
+        ]
+      ],
+      "mean_fees_c": 0.0,
+      "trades_sample": [
+        {
+          "t_entry": 1781199900,
+          "direction": -1,
+          "entry": 0.295,
+          "exit": 0.17,
+          "net_c": -12.5,
+          "reason": "sl",
+          "hold_min": 20,
+          "mfe_c": 2.5,
+          "mae_c": -11.5,
+          "fees_c": 0.0,
+          "market": "US x Iran diplomatic meeting by July 31, 2026?"
+        },
+        {
+          "t_entry": 1781229900,
+          "direction": 1,
+          "entry": 0.1955,
+          "exit": 0.0735,
+          "net_c": -12.2,
+          "reason": "sl",
+          "hold_min": 30,
+          "mfe_c": 0.0,
+          "mae_c": -11.2,
+          "fees_c": 0.0,
+          "market": "US announces new Iran agreement/ceasefire extension by June "
+        },
+        {
+          "t_entry": 1781214900,
+          "direction": 1,
+          "entry": 0.28,
+          "exit": 0.175,
+          "net_c": -10.5,
+          "reason": "sl",
+          "hold_min": 50,
+          "mfe_c": 0.0,
+          "mae_c": -9.5,
+          "fees_c": 0.0,
+          "market": "US announces new Iran agreement/ceasefire extension by June "
+        },
+        {
+          "t_entry": 1780959000,
+          "direction": 1,
+          "entry": 0.13,
+          "exit": 0.48,
+          "net_c": 35.0,
+          "reason": "tp",
+          "hold_min": 30,
+          "mfe_c": 36.0,
+          "mae_c": -2.0,
+          "fees_c": 0.0,
+          "market": "Bab el-Mandeb Strait effectively closed by June 22?"
+        },
+        {
+          "t_entry": 1779996300,
+          "direction": -1,
+          "entry": 0.28,
+          "exit": 0.52,
+          "net_c": 24.0,
+          "reason": "tp",
+          "hold_min": 110,
+          "mfe_c": 25.0,
+          "mae_c": -1.0,
+          "fees_c": 0.0,
+          "market": "Will Trump agree to Iranian oil sanction relief by June 30?"
+        },
+        {
+          "t_entry": 1780859100,
+          "direction": -1,
+          "entry": 0.32,
+          "exit": 0.545,
+          "net_c": 22.5,
+          "reason": "tp",
+          "hold_min": 5,
+          "mfe_c": 23.5,
+          "mae_c": 0.0,
+          "fees_c": 0.0,
+          "market": "Israel closes its airspace by June 30?"
+        }
+      ]
+    },
+    "trig4c_delay10m": {
+      "n": 294,
+      "mean_net_c": -0.18,
+      "median_net_c": 0.25,
+      "win_rate": 0.5,
+      "total_net_usd_at_2usd": 7.14,
+      "exit_reasons": {
+        "tp": 138,
+        "timeout": 99,
+        "sl": 56,
+        "end_of_data": 1
+      },
+      "mean_hold_min": 127,
+      "subwindow_mean_c": {
+        "w1": 0.28,
+        "w2": -2.04,
+        "w3": -0.26
+      },
+      "top_markets": [
+        [
+          "US announces new Iran agreement/ceasefir",
+          43
+        ],
+        [
+          "Will Donald Trump announce that the Unit",
+          21
+        ],
+        [
+          "Israel closes its airspace by June 30?",
+          17
+        ],
+        [
+          "Israel closes its airspace by June 15?",
+          14
+        ],
+        [
+          "Trump announces US x Iran ceasefire over",
+          11
+        ]
+      ],
+      "mean_fees_c": 0.0
+    }
+  }
+}

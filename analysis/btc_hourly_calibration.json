@@ -1,0 +1,133 @@
+{
+  "generated": "2026-06-12T07:28:51Z",
+  "days": 30,
+  "resolved_windows": 694,
+  "calibration": {
+    "T-15m 0.50-0.60": {
+      "wins": 39,
+      "n": 63,
+      "p_win": 0.619,
+      "breakeven_mid": 0.55
+    },
+    "T-10m 0.50-0.60": {
+      "wins": 26,
+      "n": 56,
+      "p_win": 0.4643,
+      "breakeven_mid": 0.55
+    },
+    "T-5m 0.50-0.60": {
+      "wins": 20,
+      "n": 43,
+      "p_win": 0.4651,
+      "breakeven_mid": 0.55
+    },
+    "T-15m 0.60-0.70": {
+      "wins": 52,
+      "n": 79,
+      "p_win": 0.6582,
+      "breakeven_mid": 0.65
+    },
+    "T-10m 0.60-0.70": {
+      "wins": 30,
+      "n": 50,
+      "p_win": 0.6,
+      "breakeven_mid": 0.65
+    },
+    "T-5m 0.60-0.70": {
+      "wins": 28,
+      "n": 44,
+      "p_win": 0.6364,
+      "breakeven_mid": 0.65
+    },
+    "T-15m 0.70-0.80": {
+      "wins": 73,
+      "n": 99,
+      "p_win": 0.7374,
+      "breakeven_mid": 0.75
+    },
+    "T-10m 0.70-0.80": {
+      "wins": 59,
+      "n": 79,
+      "p_win": 0.7468,
+      "breakeven_mid": 0.75
+    },
+    "T-5m 0.70-0.80": {
+      "wins": 31,
+      "n": 45,
+      "p_win": 0.6889,
+      "breakeven_mid": 0.75
+    },
+    "T-15m 0.80-0.85": {
+      "wins": 46,
+      "n": 58,
+      "p_win": 0.7931,
+      "breakeven_mid": 0.825
+    },
+    "T-10m 0.80-0.85": {
+      "wins": 41,
+      "n": 52,
+      "p_win": 0.7885,
+      "breakeven_mid": 0.825
+    },
+    "T-5m 0.80-0.85": {
+      "wins": 24,
+      "n": 28,
+      "p_win": 0.8571,
+      "breakeven_mid": 0.825
+    },
+    "T-15m 0.85-0.90": {
+      "wins": 54,
+      "n": 60,
+      "p_win": 0.9,
+      "breakeven_mid": 0.875
+    },
+    "T-10m 0.85-0.90": {
+      "wins": 43,
+      "n": 51,
+      "p_win": 0.8431,
+      "breakeven_mid": 0.875
+    },
+    "T-5m 0.85-0.90": {
+      "wins": 32,
+      "n": 35,
+      "p_win": 0.9143,
+      "breakeven_mid": 0.875
+    },
+    "T-15m 0.90-0.95": {
+      "wins": 86,
+      "n": 97,
+      "p_win": 0.8866,
+      "breakeven_mid": 0.925
+    },
+    "T-10m 0.90-0.95": {
+      "wins": 71,
+      "n": 79,
+      "p_win": 0.8987,
+      "breakeven_mid": 0.925
+    },
+    "T-5m 0.90-0.95": {
+      "wins": 53,
+      "n": 62,
+      "p_win": 0.8548,
+      "breakeven_mid": 0.925
+    },
+    "T-15m 0.95-0.99": {
+      "wins": 183,
+      "n": 187,
+      "p_win": 0.9786,
+      "breakeven_mid": 0.97
+    },
+    "T-10m 0.95-0.99": {
+      "wins": 176,
+      "n": 178,
+      "p_win": 0.9888,
+      "breakeven_mid": 0.97
+    },
+    "T-5m 0.95-0.99": {
+      "wins": 149,
+      "n": 154,
+      "p_win": 0.9675,
+      "breakeven_mid": 0.97
+    }
+  }
+}
