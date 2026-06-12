@@ -163,6 +163,13 @@ def reconcile(state: dict) -> dict:
             emoji = "🎉" if t["status"] == "won" else "💀"
             log(f"  {emoji} LONGSHOT {t['status'].upper()}: {t['question'][:40]} "
                 f"pnl ${t['pnl']:+.2f}")
+            if not config.SHADOW_MODE:  # shadow settles journal via bot/shadow.py
+                from .journal import record as journal
+                journal("settle", strategy="LONGSHOT", market=t["question"],
+                        result=t["status"], token_id=t["token_id"],
+                        entry_price=t["fill"], shares=t["shares"],
+                        cost_usd=t["amount_usd"], pnl_usd=t["pnl"],
+                        thesis=t.get("thesis", ""))
             write_alert(f"{emoji} LONGSHOT {t['status']}: {t['question']}\n"
                         f"pnl ${t['pnl']:+.2f}")
         except Exception as e:
@@ -352,8 +359,12 @@ def run_longshot_check(dry_run: bool = False) -> int:
                 continue
             label = f"{question[:40]} → {outcomes[idx]}"
 
+            from .journal import record as journal
             if ask - bid > config.LONGSHOT_MAX_SPREAD:
                 log(f"  🎯 LONGSHOT skip {label}: spread {ask-bid:.3f}")
+                journal("entry_skip", strategy="LONGSHOT", market=question,
+                        outcome=outcomes[idx], check="spread", ask=ask, bid=bid,
+                        detail=f"spread {ask-bid:.3f} > {config.LONGSHOT_MAX_SPREAD}")
                 break
             asks = book.get("asks") or []
             band_depth_usd = sum(
@@ -362,10 +373,18 @@ def run_longshot_check(dry_run: bool = False) -> int:
             if band_depth_usd < config.LONGSHOT_MIN_DEPTH_MULT * order_usd:
                 log(f"  🎯 LONGSHOT skip {label}: in-band depth "
                     f"${band_depth_usd:.0f}")
+                journal("entry_skip", strategy="LONGSHOT", market=question,
+                        outcome=outcomes[idx], check="depth", ask=ask,
+                        detail=f"in-band depth ${band_depth_usd:.0f} < "
+                               f"{config.LONGSHOT_MIN_DEPTH_MULT}x ${order_usd:.2f}")
                 break
 
             # AI gate — the expensive check runs last
             approved, verdict = _ai_verdict(m, outcomes[idx], ask, days_to_end)
+            journal("ai_verdict", strategy="LONGSHOT", market=question,
+                    outcome=outcomes[idx], approved=approved, ask=ask,
+                    days_to_end=round(days_to_end, 1),
+                    market_id=mid, verdict=verdict)
             if not approved:
                 log(f"  🎯 LONGSHOT AI skip {label}: {verdict[:100]}")
                 break

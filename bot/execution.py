@@ -306,6 +306,7 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: amount_usd={amount_usd} is non-positive. Refusing buy.")
         return {"success": False, "error": "Non-positive buy amount"}
 
+    from .journal import record as journal
     result = _place_buy(token_id, amount_usd, market_name, reason, thesis)
     if order_succeeded(result):
         shares = result.get("shares") or (
@@ -315,9 +316,16 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         write_alert(f"🚀 {tag}BOUGHT: {market_name}\nAmt: ${amount_usd:.2f}\nReason: {reason}")
         log_trade("BUY", market_name, entry_price, shares,
                   amount_usd=amount_usd, reason=reason, thesis=thesis, token_id=token_id)
+        journal("buy", strategy=reason, market=market_name, status="filled",
+                token_id=token_id, entry_price=entry_price, shares=shares,
+                amount_usd=amount_usd, fee_usd=result.get("fee_usd"),
+                fill_price=result.get("avg_price"), thesis=thesis)
         return {"success": True, "result": result}
     else:
         log(f"  ❌ Buy failed: {market_name[:50]}: {result}")
+        journal("buy", strategy=reason, market=market_name, status="failed",
+                token_id=token_id, entry_price=entry_price,
+                amount_usd=amount_usd, detail=str(result)[:300])
         return {"success": False, "result": result}
 
 
@@ -342,6 +350,7 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: entry_price={entry_price} outside (0,1). Refusing buy.")
         return {"success": False, "error": f"Invalid entry price {entry_price}"}
 
+    from .journal import record as journal
     result = _place_buy(token_id, amount_usd, market_name, reason, thesis)
     if order_succeeded(result):
         shares = result.get("shares") or round(amount_usd / entry_price, 4)
@@ -352,8 +361,15 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
         log_trade("BUY", market_name, entry_price, shares,
                   amount_usd=amount_usd, reason=reason, thesis=thesis,
                   token_id=token_id)
+        journal("buy", strategy=reason, market=market_name, status="filled",
+                token_id=token_id, entry_price=entry_price, shares=shares,
+                amount_usd=amount_usd, fee_usd=result.get("fee_usd"),
+                fill_price=result.get("avg_price"), thesis=thesis)
         return {"success": True, "result": result, "shares": shares}
     log(f"  ❌ Buy failed ({reason}): {market_name[:50]}: {result}")
+    journal("buy", strategy=reason, market=market_name, status="failed",
+            token_id=token_id, entry_price=entry_price,
+            amount_usd=amount_usd, detail=str(result)[:300])
     return {"success": False, "result": result}
 
 
@@ -397,6 +413,7 @@ def execute_sell(token_id: str, size: float, market_name: str,
     # market_sell amount = number of shares for SELL orders (NOT dollar amount).
     # Previously this was `size * price` which sold far fewer shares than intended
     # at low prices (fix #21).
+    from .journal import record as journal
     sell_value_usd = size * price if price > 0 else 0
     result = _place_sell(token_id, size, market_name, reason)
     if order_succeeded(result):
@@ -404,12 +421,19 @@ def execute_sell(token_id: str, size: float, market_name: str,
         log(f"  ✅ {tag}Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
         write_alert(f"✅ {tag}SOLD: {market_name}\n{size:.1f} shares for ~${sell_value_usd:.2f}\nReason: {reason}")
         log_trade("SELL", market_name, price, size, profit=pnl, reason=reason, token_id=token_id)
+        journal("sell", strategy=reason, market=market_name, status="filled",
+                token_id=token_id, shares=size, price=price,
+                pnl_usd=result.get("pnl_usd", pnl),
+                fill_price=result.get("avg_price"))
         # Record sell for cooldown tracking (fix #29)
         _recent_sells[token_id] = _time.time()
         return {"success": True, "result": result}
     else:
         log(f"  ❌ Sell failed: {market_name[:50]}: {result}")
         write_alert(f"❌ Sell failed for {market_name}: {result}")
+        journal("sell", strategy=reason, market=market_name, status="failed",
+                token_id=token_id, shares=size, price=price,
+                detail=str(result)[:300])
         return {"success": False, "result": result}
 
 

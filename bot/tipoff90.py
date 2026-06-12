@@ -147,6 +147,12 @@ def reconcile(state: dict) -> dict:
             emoji = "🎉" if t["status"] == "won" else "💀"
             log(f"  {emoji} TIPOFF90 {t['status'].upper()}: {t['question'][:40]} "
                 f"pnl ${t['pnl']:+.2f}")
+            if not config.SHADOW_MODE:  # shadow settles journal via bot/shadow.py
+                from .journal import record as journal
+                journal("settle", strategy="TIPOFF90", market=t["question"],
+                        result=t["status"], token_id=t["token_id"],
+                        entry_price=t["fill"], shares=t["shares"],
+                        cost_usd=t["amount_usd"], pnl_usd=t["pnl"])
         except Exception as e:
             log(f"  ⚠️ tipoff90 reconcile error for {t.get('question', '?')[:30]}: {e}")
 
@@ -301,9 +307,13 @@ def run_tipoff90_check(dry_run: bool = False) -> int:
             # ── This side is the in-band favorite. All checks must pass. ──
             label = f"{question[:35]} → {outcomes[idx]}"
 
+            from .journal import record as journal
             if ask - bid > config.TIPOFF90_MAX_SPREAD:
                 log(f"  🏀 TIPOFF90 skip {label}: spread {ask-bid:.3f} > "
                     f"{config.TIPOFF90_MAX_SPREAD}")
+                journal("entry_skip", strategy="TIPOFF90", market=question,
+                        outcome=outcomes[idx], check="spread", ask=ask, bid=bid,
+                        detail=f"spread {ask-bid:.3f} > {config.TIPOFF90_MAX_SPREAD}")
                 break
             # In-band ask depth must cover the order several times over so a
             # FOK market buy cannot sweep past the band ceiling.
@@ -315,11 +325,18 @@ def run_tipoff90_check(dry_run: bool = False) -> int:
                 log(f"  🏀 TIPOFF90 skip {label}: in-band depth "
                     f"${band_depth_usd:.0f} < {config.TIPOFF90_MIN_DEPTH_MULT}x "
                     f"${order_usd:.2f}")
+                journal("entry_skip", strategy="TIPOFF90", market=question,
+                        outcome=outcomes[idx], check="depth", ask=ask,
+                        detail=f"in-band depth ${band_depth_usd:.0f} < "
+                               f"{config.TIPOFF90_MIN_DEPTH_MULT}x ${order_usd:.2f}")
                 break
             drop = _recent_price_drop(token_id, ask)
             if drop > config.TIPOFF90_DROP_GUARD:
                 log(f"  🏀 TIPOFF90 skip {label}: price fell {drop:.3f} in "
                     f"last 15min (late-scratch guard)")
+                journal("entry_skip", strategy="TIPOFF90", market=question,
+                        outcome=outcomes[idx], check="drop_guard", ask=ask,
+                        detail=f"price fell {drop:.3f} in last 15min")
                 break
 
             if dry_run:

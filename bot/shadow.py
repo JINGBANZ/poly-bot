@@ -77,13 +77,28 @@ def _new_ledger() -> dict:
 
 
 def load_ledger() -> dict:
+    """Load the persistent paper ledger; survives bot restarts.
+
+    A corrupt file is backed up (never silently discarded) before starting
+    fresh — the trading history is the whole point of the shadow run.
+    """
     path = _ledger_path()
     if os.path.exists(path):
         try:
             with open(path) as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            log(f"  ⚠️ shadow: bad ledger file ({e}), starting fresh")
+            backup = f"{path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(path, backup)
+                log(f"  🚨 shadow: ledger unreadable ({e}) — backed up to "
+                    f"{backup}, starting fresh")
+                from .alerts import write_alert
+                write_alert(f"🚨 [SHADOW] Ledger was corrupt and reset. "
+                            f"History preserved at {backup}",
+                            severity="CRITICAL")
+            except OSError:
+                log(f"  ⚠️ shadow: bad ledger file ({e}), starting fresh")
     return _new_ledger()
 
 
@@ -343,6 +358,12 @@ def _settle_resolutions(ledger: dict) -> int:
                                      "status": "closed"})
             ledger["positions"].remove(pos)
             settled += 1
+            from .journal import record as journal
+            journal("settle", strategy=pos.get("reason", ""),
+                    market=pos.get("question", ""), result=result,
+                    token_id=pos["token_id"], shares=pos["shares"],
+                    entry_price=pos["avg_price"], cost_usd=pos["cost_usd"],
+                    pnl_usd=pnl, thesis=pos.get("thesis", ""))
             emoji = "🎉" if result == "won" else "💀"
             log(f"  🜁 {emoji} SHADOW {result.upper()}: {pos['question'][:45]} "
                 f"pnl ${pnl:+.2f}")
@@ -412,11 +433,17 @@ def _apply_guardrails(ledger: dict) -> int:
         if result.get("success"):
             from .alerts import write_alert
             from .execution import log_trade
+            from .journal import record as journal
             write_alert(f"🜁 [SHADOW] {trigger}: {pos.get('question', '?')}\n"
                         f"pnl ${result['pnl_usd']:+.2f}")
             log_trade("SELL", pos.get("question", ""), result["avg_price"],
                       pos["shares"], profit=result["pnl_usd"], reason=trigger,
                       token_id=pos["token_id"])
+            journal("sell", strategy=pos.get("reason", ""),
+                    market=pos.get("question", ""), status="filled",
+                    trigger=trigger, token_id=pos["token_id"],
+                    shares=pos["shares"], entry_price=pos["avg_price"],
+                    fill_price=result["avg_price"], pnl_usd=result["pnl_usd"])
             sells += 1
         else:
             log(f"  🜁 shadow {trigger} failed for "

@@ -237,6 +237,13 @@ Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"""
 
     log(f"  {'✅' if verdict == 'TRADE' else '❌' if verdict == 'PASS' else '❓'} Research verdict: {verdict} — {reason[:100]}")
 
+    from .journal import record as journal
+    journal("research", strategy="SCAN", market=question, side=side,
+            entry_price=entry_price, verdict=verdict, reason=reason,
+            thesis=thesis if verdict == "TRADE" else "",
+            scan_reason=scan_reason, searches_used=searches_used,
+            adverse_selection=adverse)
+
     return {
         "verdict": verdict,
         "thesis": thesis if verdict == "TRADE" else "",

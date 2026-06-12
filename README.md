@@ -144,6 +144,49 @@ strategy state files. The paper bankroll starts at $100
 ROI kill-switches all operate on it, so a one-to-two-week shadow run is a
 faithful dress rehearsal for going live.
 
+The ledger is plain JSON on disk and is the single source of truth — the bot
+can be stopped and restarted at any time and the paper portfolio resumes
+exactly where it left off. A corrupt ledger is backed up
+(`shadow_ledger.json.corrupt-<ts>`), never silently discarded.
+
+## Evaluation & Decision Logging (CRITICAL — read this before changing strategies)
+
+**Every trading decision must leave a machine-readable trace.** The bot's
+edge only improves through post-hoc analysis of what it did AND what it
+declined to do — so the decision trail is as important as the trades.
+
+`bot/journal.py` appends structured events to `state/decision_journal.jsonl`
+(append-only JSONL, shared by shadow and live mode with a `shadow` flag):
+
+| Event | Recorded when | Key fields |
+|-------|---------------|------------|
+| `entry_skip` | a candidate fails an entry check | strategy, market, check, detail |
+| `ai_verdict` | an LLM gate rules on a candidate | approved, full verdict text, ask, days_to_end |
+| `research` | the research pipeline issues TRADE/PASS | verdict, reason, thesis, scan_reason |
+| `buy` / `sell` | an order fills or fails | fill_price vs entry_price, fee, pnl, thesis |
+| `settle` | a held position resolves | result won/lost, pnl, original thesis |
+
+**Rules for future agents working on this repo:**
+
+1. **New strategy or gate ⇒ journal it.** Any new entry filter, AI gate, or
+   exit rule must call `journal.record(...)` for both the taken and the
+   not-taken path. A decision that isn't journaled cannot be evaluated and
+   will be flagged in review.
+2. **Never truncate analysis in the journal.** The human log (`logs/`) may
+   truncate; the journal stores full verdict/thesis text.
+3. **Run evaluation passes periodically** (an agent can do this): read the
+   journal with `bot.journal.read(...)` plus `state/shadow_ledger.json` and
+   `state/shadow_equity.jsonl`, and look for: AI-skipped candidates that went
+   on to win (gate too tight?), guardrail checks that reject the most
+   would-be winners, fill slippage vs quoted price, research verdicts vs
+   actual resolutions, and per-strategy ROI vs the backtest expectation.
+   Write findings to `analysis/` and propose config/strategy changes.
+4. **Performance data sources** (all restart-safe, all under `state/`):
+   `decision_journal.jsonl` (decisions), `shadow_trade_log.jsonl` /
+   `trade_log.jsonl` (executions), `shadow_ledger.json` (positions + realized
+   P&L), `shadow_equity.jsonl` (equity curve), `shadow_*_state.json`
+   (per-strategy resolutions feeding the ROI kill-switches).
+
 ## Trading Rules (from config.py)
 
 | Rule | Value |
