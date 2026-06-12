@@ -1,7 +1,38 @@
 # Strategy: Longshot Hunter — politics longshots with an AI gate
 
+> ## ⛔ RETIRED 2026-06-12 — DO NOT RE-IMPLEMENT
+>
+> Removed by owner decision (commit removing `bot/longshot.py`). The strategy
+> worked as designed — entries, AI gate, guardrails all functioned — but the
+> *profile* is rejected:
+>
+> 1. **Capital lockup conflicts with the owner's requirements.** Positions are
+>    held to resolution on markets up to 45 days out, with up to 15 concurrent
+>    positions: most of the bankroll sits frozen for weeks. The owner
+>    explicitly wants fast capital turnover (same-day to a-few-days holds)
+>    and dislikes waiting on resolution. This preference is durable — it was
+>    restated on 2026-06-12 after seeing the strategy live.
+> 2. **The edge was statistically fragile.** Honest backtest: +28.8%/trade
+>    pooled, but the recent-half CI spanned zero and the edge died at 8¢
+>    slippage. A ~35% win rate also means long losing streaks at ~1 trade/day,
+>    which is psychologically and statistically hard to distinguish from a
+>    dead edge inside the 25-trade auto-disable window.
+> 3. **Operating cost:** an LLM verdict call per candidate per cycle.
+>
+> **Guidance for future agents:** do not propose strategies whose holding
+> period is "weeks until resolution," whatever the backtest ROI, unless the
+> owner changes the turnover requirement first. If revisiting cheap-side
+> politics specifically, the mechanism (price compression toward 50¢,
+> arXiv:2602.19520) is real but noisy — any revival needs an *exit before
+> resolution* (selling into repricing, not holding for the $1 payout) and a
+> fresh backtest proving the edge survives the round-trip spread.
+>
+> The module lived at `bot/longshot.py` (deleted; recover via git history,
+> commit 8a03b82 added it). Original analysis follows unchanged.
+
+
 **Date:** 2026-06-10
-**Status:** Deployed (`bot/longshot.py`)
+**Status:** RETIRED 2026-06-12 (see header below)
 **Profile:** ~1 entry/day average (clustered 0–4), per-trade win rate ~33–45%,
 wins pay +150–500%. This is the deliberate frequency-over-certainty
 counterpart to Tipoff 90 — chosen explicitly by Forrest ("willing to

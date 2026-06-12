@@ -332,7 +332,7 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
 def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
                          reason: str, entry_price: float,
                          thesis: str = "") -> dict:
-    """Buy pipeline for self-guarded strategy modules (Tipoff 90, Longshot).
+    """Buy pipeline for self-guarded strategy modules (e.g. Tipoff 90).
 
     Unlike execute_buy, this does NOT apply the cheap-side guards (85c
     ceiling, value zone, R:R, duration) — those encode the legacy longshot

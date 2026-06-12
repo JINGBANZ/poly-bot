@@ -63,12 +63,6 @@ def _is_strategy_held(token_id: str) -> bool:
             return True
     except Exception:
         pass
-    try:
-        from .longshot import is_longshot_position
-        if is_longshot_position(token_id):
-            return True
-    except Exception:
-        pass
     return False
 
 def _state_changed(token_id: str, action: str, detail: str) -> bool:
@@ -386,16 +380,8 @@ def run_cycle(dry_run=False) -> dict:
         if verbose:
             log(f"⚠️ Tipoff 90 check: {e}")
 
-    # 0a3. FAST PATH: Longshot Hunter — politics longshots + AI gate (every cycle)
-    # Own entry guardrails + edge-decay auto-disable (bot/longshot.py).
-    try:
-        from .longshot import run_longshot_check
-        longshot_buys = run_longshot_check(dry_run=dry_run)
-        if longshot_buys > 0:
-            log(f"🎯 Longshot Hunter: {longshot_buys} trade(s) executed")
-    except Exception as e:
-        if verbose:
-            log(f"⚠️ Longshot Hunter check: {e}")
+    # (Longshot Hunter removed 2026-06-12 — see analysis/longshot_hunter.md
+    #  "RETIRED" header before re-implementing anything similar.)
 
     # 0a4. Shadow ledger upkeep — settle resolved paper positions,
     # mark-to-market, apply paper SL/TP, snapshot the equity curve.
@@ -498,11 +484,11 @@ def run_cycle(dry_run=False) -> dict:
         if _is_dust_position(pos):
             continue
 
-        # Strategy positions (Tipoff 90, Longshot Hunter) are hold-to-resolution:
-        # interim dips are expected and must NOT trigger stop-loss/take-profit
-        # (the backtested edge requires holding through resolution). Exemptions
-        # lapse after each strategy's hold window so stuck positions revert to
-        # normal guardrails — see bot/tipoff90.py and bot/longshot.py.
+        # Strategy positions (Tipoff 90) are hold-to-resolution: interim dips
+        # are expected and must NOT trigger stop-loss/take-profit (the
+        # backtested edge requires holding through resolution). The exemption
+        # lapses after the strategy's hold window so stuck positions revert
+        # to normal guardrails — see bot/tipoff90.py.
         if _is_strategy_held(pos.token_id):
             results["STRATEGY_HOLD"] = results.get("STRATEGY_HOLD", 0) + 1
             continue

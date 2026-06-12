@@ -99,10 +99,10 @@ class TestShadowBuySell:
             "market_id": "123", "question": "Test?", "outcome": "Yes",
             "outcome_index": 0, "end_date": "2026-07-01"})
 
-        result = shadow.shadow_buy("tok1", 10.0, name="Test?", reason="LONGSHOT")
+        result = shadow.shadow_buy("tok1", 10.0, name="Test?", reason="LLM_TRADE")
         assert result["success"]
         assert result["shares"] == 20.0
-        fee = shadow._taker_fee(20.0, 0.50, "LONGSHOT")
+        fee = shadow._taker_fee(20.0, 0.50, "LLM_TRADE")
         assert shadow.get_cash() == pytest.approx(100.0 - 10.0 - fee)
 
         ledger = shadow.load_ledger()
@@ -128,7 +128,7 @@ class TestShadowBuySell:
         monkeypatch.setattr(shadow, "get_book",
                             lambda t: _book(asks=[(0.50, 100)]))
         monkeypatch.setattr(shadow, "_market_meta", lambda t: {})
-        shadow.shadow_buy("tok1", 10.0, reason="LONGSHOT")
+        shadow.shadow_buy("tok1", 10.0, reason="LLM_TRADE")
 
         # Price doubled — sell all 20 shares into deep bids at 1.00... use 0.99
         monkeypatch.setattr(shadow, "get_book",
@@ -159,7 +159,7 @@ class TestSettlement:
         monkeypatch.setattr(shadow, "_market_meta", lambda t: {
             "market_id": "m1", "question": "Settles?", "outcome": "Yes",
             "outcome_index": outcome_index, "end_date": ""})
-        shadow.shadow_buy("tok1", 10.0, reason="LONGSHOT")
+        shadow.shadow_buy("tok1", 10.0, reason="LLM_TRADE")
 
     def _gamma_closed(self, monkeypatch, prices):
         class Resp:
@@ -238,7 +238,7 @@ class TestPaperGuardrails:
         monkeypatch.setattr(shadow, "get_book",
                             lambda t: _book(asks=[(0.50, 100)]))
         monkeypatch.setattr(shadow, "_market_meta", lambda t: {})
-        shadow.shadow_buy("tok1", 10.0, reason="LONGSHOT")
+        shadow.shadow_buy("tok1", 10.0, reason="LLM_TRADE")
 
         monkeypatch.setattr(shadow, "get_book",
                             lambda t: _book(bids=[(0.10, 100)]))
@@ -285,7 +285,7 @@ class TestExecutionRouting:
 
     def test_trade_log_goes_to_shadow_file(self, shadow_mode):
         from bot import execution
-        execution.log_trade("BUY", "Test", 0.5, 10, reason="LONGSHOT")
+        execution.log_trade("BUY", "Test", 0.5, 10, reason="LLM_TRADE")
         shadow_log = os.path.join(config.STATE_DIR, "shadow_trade_log.jsonl")
         assert os.path.exists(shadow_log)
         with open(shadow_log) as f:
@@ -320,7 +320,7 @@ class TestShadowCycle:
                             lambda t: _book(asks=[(0.50, 100)],
                                             bids=[(0.48, 100)]))
         monkeypatch.setattr(shadow, "_market_meta", lambda t: {})
-        shadow.shadow_buy("tok1", 10.0, reason="LONGSHOT")
+        shadow.shadow_buy("tok1", 10.0, reason="LLM_TRADE")
 
         # Gamma says market still open
         class Resp:
@@ -333,7 +333,7 @@ class TestShadowCycle:
         summary = shadow.run_shadow_check()
         assert summary["open"] == 1
         # equity = cash + 20 sh × 0.48 bid
-        fee = shadow._taker_fee(20.0, 0.50, "LONGSHOT")
+        fee = shadow._taker_fee(20.0, 0.50, "LLM_TRADE")
         assert summary["equity"] == pytest.approx(100.0 - 10.0 - fee + 20 * 0.48)
 
         eq_path = os.path.join(config.STATE_DIR, "shadow_equity.jsonl")
@@ -343,7 +343,7 @@ class TestShadowCycle:
         monkeypatch.setattr(shadow, "get_book",
                             lambda t: _book(asks=[(0.50, 100)]))
         monkeypatch.setattr(shadow, "_market_meta", lambda t: {})
-        shadow.shadow_buy("tok1", 10.0, reason="LONGSHOT")
+        shadow.shadow_buy("tok1", 10.0, reason="LLM_TRADE")
 
         rep = shadow.performance_report()
         assert rep["starting_cash"] == 100.0

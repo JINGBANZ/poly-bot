@@ -204,7 +204,9 @@ declined to do — so the decision trail is as important as the trades.
 
 **Tipoff 90 strategy** (`bot/tipoff90.py`): buys NBA pre-game favorites priced 90–96¢ in the last 30 min before tipoff and holds to resolution (exempt from stop-loss/take-profit while open). Has its own entry guardrails, daily cap, and an edge-decay auto-disable. See `analysis/nba_favorites_strategy.md` for the backtest (84/84, +7.5%/trade) and the full guardrail stack. Disable via `state/TIPOFF90_DISABLED` or `TIPOFF90_ENABLED = False`.
 
-**Longshot Hunter strategy** (`bot/longshot.py`): buys politics longshots priced 10–40¢ resolving within 45 days, but only after an LLM verdict confirms a concrete live path (scheduled catalyst / base rate above price); holds to resolution. ~1 entry/day, ~33–45% win rate, wins pay +150–500%. Own guardrails: 3/day cap, 15 max open, one per event, AI gate fails closed without an LLM key (DeepSeek preferred — set `DEEPSEEK_API_KEY`), auto-disable if ROI < 0 after 25 resolved trades. See `analysis/longshot_hunter.md`. Disable via `state/LONGSHOT_DISABLED` or `LONGSHOT_ENABLED = False`.
+### Retired strategies — read before adding a new one
+
+**Longshot Hunter** (politics longshots 10–40¢ held to resolution, AI-gated) was **removed 2026-06-12** by owner decision. Why, and why not to rebuild it: positions held to resolution over multi-week horizons (≤45-day markets, up to 15 concurrent positions) lock up the whole bankroll, which conflicts with the owner's fast-capital-turnover requirement; and the edge was statistically fragile anyway (backtest +28.8%/trade pooled, but the recent-half confidence interval spanned zero, and it died at 8¢ slippage). **Do not re-implement strategies whose holding period is "weeks to resolution" regardless of backtest ROI** — the owner has explicitly rejected the profile. Full post-mortem and the original analysis: `analysis/longshot_hunter.md` (RETIRED header). Fast-turnover taker strategies have also been measured and rejected — see `analysis/hft_strategy_research.md` and the backtest results in `analysis/` before proposing momentum, fade, negRisk-arb, or crypto up/down ideas.
 
 ## Dependencies
 

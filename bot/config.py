@@ -94,8 +94,7 @@ WHALE_FOLLOW_MAX_USD = 1.50        # Max exposure on momentum trades
 
 # Circuit breakers
 MAX_DAILY_TRADES = 6          # Max trades per day (buys + sells) across ALL
-                              # strategies; Tipoff 90 and Longshot Hunter also
-                              # have their own 3/day caps
+                              # strategies; Tipoff 90 also has its own 3/day cap
 MAX_DAILY_LOSS_USD = 3.00     # Halt trading if daily realized loss exceeds this
 BALANCE_FLOOR_USD = 1.00      # Never spend below this USDC balance
 KILL_SWITCH_FILE = os.path.join(STATE_DIR, "KILL_SWITCH")  # Touch this file to halt all trading
@@ -123,22 +122,9 @@ TIPOFF90_HOLD_MAX_HOURS = 48       # After this, position reverts to normal guar
 TIPOFF90_KILL_AFTER_TRADES = 30    # Auto-disable if cumulative ROI < 0 after N resolved trades
 TIPOFF90_DISABLED_FILE = os.path.join(STATE_DIR, "TIPOFF90_DISABLED")
 
-# Longshot Hunter strategy — politics longshots with AI verification
-# (see analysis/nba_favorites_strategy.md runner-up + analysis/longshot_hunter.md)
-LONGSHOT_ENABLED = True
-LONGSHOT_TAG_ID = 2                # Gamma tag: Politics
-LONGSHOT_BAND_LO = 0.10            # Buy if best ask >= this ...
-LONGSHOT_BAND_HI = 0.40            # ... and < this (exclusive)
-LONGSHOT_MAX_DAYS_TO_END = 45      # Market must resolve within this many days
-LONGSHOT_MIN_VOLUME_TOTAL = 2_000_000  # Min cumulative market volume at entry
-LONGSHOT_MIN_VOLUME_24H = 20_000   # Min 24h volume (market must be alive)
-LONGSHOT_MAX_SPREAD = 0.03         # Skip if bid/ask spread wider than 3c
-LONGSHOT_MIN_DEPTH_MULT = 5.0      # In-band ask depth must be >= 5x order size
-LONGSHOT_MAX_POSITION_USD = 2.00   # Max $ per market
-LONGSHOT_BANKROLL_FRACTION = 0.05  # ... and never more than 5% of free balance
-LONGSHOT_MAX_TRADES_PER_DAY = 3    # Strategy-level daily cap
-LONGSHOT_MAX_OPEN_POSITIONS = 15   # Cap concurrent open longshot positions
-LONGSHOT_HOLD_MAX_DAYS = 60        # After this, position reverts to normal guardrails
-LONGSHOT_AI_REQUIRED = True        # LLM must approve each entry (fail-closed)
-LONGSHOT_KILL_AFTER_TRADES = 25    # Auto-disable if cumulative ROI < 0 after N resolved
-LONGSHOT_DISABLED_FILE = os.path.join(STATE_DIR, "LONGSHOT_DISABLED")
+# Longshot Hunter strategy — REMOVED 2026-06-12 by owner decision.
+# Multi-week hold-to-resolution conflicts with the fast-capital-turnover
+# requirement, and the backtested edge was already marginal (recent-half CI
+# spanned zero). Read the RETIRED header in analysis/longshot_hunter.md
+# before re-implementing anything similar (politics longshots held to
+# resolution over multi-week horizons).

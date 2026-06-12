@@ -39,7 +39,6 @@ from .logger import log
 # Reasons map to the category their strategy trades in; unknown → 0.04.
 FEE_RATES = {
     "TIPOFF90": 0.03,
-    "LONGSHOT": 0.04,
     "THRESHOLD_CROSSING": 0.07,
     "WHALE_FOLLOW": 0.05,
 }
@@ -382,12 +381,6 @@ def _is_strategy_held(token_id: str) -> bool:
             return True
     except Exception:
         pass
-    try:
-        from .longshot import is_longshot_position
-        if is_longshot_position(token_id):
-            return True
-    except Exception:
-        pass
     return False
 
 
@@ -409,7 +402,7 @@ def _mark_to_market(ledger: dict) -> float:
 def _apply_guardrails(ledger: dict) -> int:
     """Paper stop-loss / take-profit on non-strategy positions. Returns sells.
 
-    Mirrors the live guardrails: strategy positions (Tipoff 90, Longshot)
+    Mirrors the live guardrails: strategy positions (Tipoff 90)
     are hold-to-resolution and skipped; everything else gets the standard
     SL/TP thresholds applied to the live bid.
     """

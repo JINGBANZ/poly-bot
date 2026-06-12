@@ -10,7 +10,6 @@ Uses LLM for:
 1. Market scanning — filter candidates for verifiable edge
 2. Position analysis — hold/sell decisions based on news + price
 3. Trade thesis — generate required 3-sentence thesis before entry
-4. Longshot Hunter entry verdicts (bot/longshot.py AI gate)
 """
 
 import json

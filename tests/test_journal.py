@@ -8,7 +8,7 @@ from bot import config, journal
 
 class TestJournal:
     def test_record_and_read(self, tmp_state_dir):
-        journal.record("ai_verdict", strategy="LONGSHOT", market="Test?",
+        journal.record("ai_verdict", strategy="SCANNER", market="Test?",
                        approved=False, verdict="SKIP: no catalyst")
         journal.record("buy", strategy="TIPOFF90", market="Lakers?",
                        status="filled", entry_price=0.93)
@@ -22,12 +22,12 @@ class TestJournal:
 
     def test_filters(self, tmp_state_dir):
         journal.record("entry_skip", strategy="TIPOFF90", market="A", check="spread")
-        journal.record("entry_skip", strategy="LONGSHOT", market="B", check="depth")
-        journal.record("buy", strategy="LONGSHOT", market="B", status="filled")
+        journal.record("entry_skip", strategy="SCANNER", market="B", check="depth")
+        journal.record("buy", strategy="SCANNER", market="B", status="filled")
 
         assert len(journal.read(event="entry_skip")) == 2
-        assert len(journal.read(strategy="LONGSHOT")) == 2
-        assert len(journal.read(event="buy", strategy="LONGSHOT")) == 1
+        assert len(journal.read(strategy="SCANNER")) == 2
+        assert len(journal.read(event="buy", strategy="SCANNER")) == 1
         assert journal.read(since="2999-01-01") == []
 
     def test_record_never_raises(self, tmp_state_dir, monkeypatch):
