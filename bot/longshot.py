@@ -65,7 +65,10 @@ Approve at most about 1 in 3 candidates. When in doubt, SKIP."""
 # ---------------------------------------------------------------------------
 
 def _state_file() -> str:
-    return os.path.join(config.STATE_DIR, "longshot_state.json")
+    # Shadow mode keeps its own state so paper trades never mix with real
+    # history (the ROI kill-switch must judge each mode on its own record).
+    name = "shadow_longshot_state.json" if config.SHADOW_MODE else "longshot_state.json"
+    return os.path.join(config.STATE_DIR, name)
 
 
 def _load_state() -> dict:

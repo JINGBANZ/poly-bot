@@ -60,6 +60,14 @@ ANTHROPIC_TOKEN_FILE = os.environ.get("ANTHROPIC_TOKEN_FILE", os.path.join(SECRE
 DEEPSEEK_KEY_FILE = os.environ.get("DEEPSEEK_KEY_FILE", os.path.join(SECRETS_DIR, ".deepseek-key"))
 GITHUB_TOKEN_FILE = os.environ.get("GITHUB_TOKEN_FILE", os.path.join(SECRETS_DIR, ".github-token"))
 
+# Shadow (paper) trading — when on, ALL buys/sells are simulated against the
+# live orderbook with play money (see bot/shadow.py); nothing touches the
+# exchange and no wallet keys are needed. Default ON: this deployment has no
+# trading credentials. Set SHADOW_MODE=0 in the env/.env to trade live.
+SHADOW_MODE = os.environ.get("SHADOW_MODE", "1").strip().lower() not in (
+    "0", "false", "no", "off")
+SHADOW_STARTING_CASH_USD = float(os.environ.get("SHADOW_STARTING_CASH_USD", "100"))
+
 # Trading rules
 STOP_LOSS_PCT = 0.35          # Sell if down 35% from entry (fix #29: tightened from 50%)
 TAKE_PROFIT_PCT = 2.00        # Take profit at 200% gain

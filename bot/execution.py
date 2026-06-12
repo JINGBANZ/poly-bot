@@ -15,6 +15,14 @@ _SELL_COOLDOWN_SEC = 3600  # 1 hour cooldown after a successful sell
 _recent_sells = {}  # token_id -> timestamp of last successful sell
 
 
+def _trade_log_path() -> str:
+    """Trade log location. Shadow mode gets its own file so paper trades
+    never pollute the real history (daily caps and P&L stay separate too)."""
+    if config.SHADOW_MODE:
+        return os.path.join(config.STATE_DIR, "shadow_trade_log.jsonl")
+    return TRADE_LOG
+
+
 def log_trade(action: str, name: str, price: float, shares: float,
               amount_usd: float = 0, profit: float = None,
               reason: str = "", thesis: str = "", token_id: str = ""):
@@ -31,9 +39,11 @@ def log_trade(action: str, name: str, price: float, shares: float,
         "reason": reason,
         "thesis": thesis,
     }
+    if config.SHADOW_MODE:
+        entry["shadow"] = True
     try:
         os.makedirs(config.STATE_DIR, exist_ok=True)
-        with open(TRADE_LOG, "a") as f:
+        with open(_trade_log_path(), "a") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
         log(f"⚠️ Failed to write trade log: {e} — trade: {action} {name}")
@@ -44,7 +54,17 @@ def get_usdc_balance() -> float:
     
     Uses the CLOB client's get_balance_allowance API — this is the
     DEFINITIVE source of truth for available cash. No estimation needed.
+
+    In shadow mode the balance is the paper ledger's cash, so strategy
+    sizing and circuit breakers operate on the simulated bankroll.
     """
+    if config.SHADOW_MODE:
+        try:
+            from .shadow import get_cash
+            return get_cash()
+        except Exception as e:
+            log(f"⚠️ shadow get_cash failed: {e}")
+            return 0.0
     try:
         from .api import get_clob_client
         from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
@@ -121,10 +141,11 @@ def get_today_trades() -> list:
     """Get trades from today (UTC)."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     trades = []
-    if not os.path.exists(TRADE_LOG):
+    trade_log = _trade_log_path()
+    if not os.path.exists(trade_log):
         return trades
     try:
-        with open(TRADE_LOG) as f:
+        with open(trade_log) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -213,6 +234,32 @@ def order_succeeded(result) -> bool:
     return bool(result.get("success") or result.get("orderID"))
 
 
+def _place_buy(token_id: str, amount_usd: float, market_name: str,
+               reason: str, thesis: str) -> dict | None:
+    """Route a buy to the real CLOB or the shadow ledger per config."""
+    if config.SHADOW_MODE:
+        from .shadow import shadow_buy
+        return shadow_buy(token_id, amount_usd, name=market_name,
+                          reason=reason, thesis=thesis)
+    from .api import market_buy
+    return market_buy(token_id, amount_usd)
+
+
+def _place_sell(token_id: str, size: float, market_name: str,
+                reason: str) -> dict | None:
+    """Route a sell to the real CLOB or the shadow ledger per config."""
+    if config.SHADOW_MODE:
+        from .shadow import shadow_sell
+        return shadow_sell(token_id, size, name=market_name, reason=reason)
+    from .api import market_sell
+    return market_sell(token_id, size)
+
+
+def _mode_tag() -> str:
+    """Prefix for logs/alerts so shadow trades are never mistaken for real."""
+    return "[SHADOW] " if config.SHADOW_MODE else ""
+
+
 def execute_buy(token_id: str, amount_usd: float, market_name: str,
                 reason: str, thesis: str = "", entry_price: float = 0,
                 end_date: str = "") -> dict:
@@ -224,7 +271,6 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
     Args:
         end_date: Optional ISO date string for market expiry (used for duration check).
     """
-    from .api import market_buy
     from .alerts import write_alert
     from .guardrails import check_reward_risk_ratio, check_market_duration, check_minimum_edge
 
@@ -260,11 +306,13 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: amount_usd={amount_usd} is non-positive. Refusing buy.")
         return {"success": False, "error": "Non-positive buy amount"}
 
-    result = market_buy(token_id, amount_usd)
+    result = _place_buy(token_id, amount_usd, market_name, reason, thesis)
     if order_succeeded(result):
-        shares = round(amount_usd / entry_price, 4) if entry_price > 0 else 0
-        log(f"  ✅ Bought: {market_name[:50]} — ${amount_usd:.2f}")
-        write_alert(f"🚀 BOUGHT: {market_name}\nAmt: ${amount_usd:.2f}\nReason: {reason}")
+        shares = result.get("shares") or (
+            round(amount_usd / entry_price, 4) if entry_price > 0 else 0)
+        tag = _mode_tag()
+        log(f"  ✅ {tag}Bought: {market_name[:50]} — ${amount_usd:.2f}")
+        write_alert(f"🚀 {tag}BOUGHT: {market_name}\nAmt: ${amount_usd:.2f}\nReason: {reason}")
         log_trade("BUY", market_name, entry_price, shares,
                   amount_usd=amount_usd, reason=reason, thesis=thesis, token_id=token_id)
         return {"success": True, "result": result}
@@ -285,7 +333,6 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
     calling. What this centralizes: order placement, success detection,
     trade logging, and alerting — the things that rotted when duplicated.
     """
-    from .api import market_buy
     from .alerts import write_alert
 
     if amount_usd <= 0:
@@ -295,11 +342,12 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
         log(f"  🛑 EXECUTION GUARD: entry_price={entry_price} outside (0,1). Refusing buy.")
         return {"success": False, "error": f"Invalid entry price {entry_price}"}
 
-    result = market_buy(token_id, amount_usd)
+    result = _place_buy(token_id, amount_usd, market_name, reason, thesis)
     if order_succeeded(result):
-        shares = round(amount_usd / entry_price, 4)
-        log(f"  ✅ Bought ({reason}): {market_name[:50]} — ${amount_usd:.2f} @ {entry_price:.2f}")
-        write_alert(f"🚀 BOUGHT ({reason}): {market_name}\n"
+        shares = result.get("shares") or round(amount_usd / entry_price, 4)
+        tag = _mode_tag()
+        log(f"  ✅ {tag}Bought ({reason}): {market_name[:50]} — ${amount_usd:.2f} @ {entry_price:.2f}")
+        write_alert(f"🚀 {tag}BOUGHT ({reason}): {market_name}\n"
                     f"${amount_usd:.2f} @ {entry_price:.2f}\n{thesis[:200]}")
         log_trade("BUY", market_name, entry_price, shares,
                   amount_usd=amount_usd, reason=reason, thesis=thesis,
@@ -335,7 +383,6 @@ def execute_sell(token_id: str, size: float, market_name: str,
         pnl: Profit/loss on this position
     """
     import time as _time
-    from .api import market_sell
     from .alerts import write_alert
 
     if size <= 0:
@@ -351,10 +398,11 @@ def execute_sell(token_id: str, size: float, market_name: str,
     # Previously this was `size * price` which sold far fewer shares than intended
     # at low prices (fix #21).
     sell_value_usd = size * price if price > 0 else 0
-    result = market_sell(token_id, size)
+    result = _place_sell(token_id, size, market_name, reason)
     if order_succeeded(result):
-        log(f"  ✅ Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
-        write_alert(f"✅ SOLD: {market_name}\n{size:.1f} shares for ~${sell_value_usd:.2f}\nReason: {reason}")
+        tag = _mode_tag()
+        log(f"  ✅ {tag}Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
+        write_alert(f"✅ {tag}SOLD: {market_name}\n{size:.1f} shares for ~${sell_value_usd:.2f}\nReason: {reason}")
         log_trade("SELL", market_name, price, size, profit=pnl, reason=reason, token_id=token_id)
         # Record sell for cooldown tracking (fix #29)
         _recent_sells[token_id] = _time.time()

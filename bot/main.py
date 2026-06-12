@@ -397,6 +397,20 @@ def run_cycle(dry_run=False) -> dict:
         if verbose:
             log(f"⚠️ Longshot Hunter check: {e}")
 
+    # 0a4. Shadow ledger upkeep — settle resolved paper positions,
+    # mark-to-market, apply paper SL/TP, snapshot the equity curve.
+    if config.SHADOW_MODE:
+        try:
+            from .shadow import run_shadow_check
+            shadow_summary = run_shadow_check(dry_run=dry_run)
+            if verbose:
+                log(f"🜁 Shadow: equity ${shadow_summary['equity']:.2f} "
+                    f"(cash ${shadow_summary['cash']:.2f}, "
+                    f"{shadow_summary['open']} open)")
+        except Exception as e:
+            if verbose:
+                log(f"⚠️ Shadow check: {e}")
+
     # 0b. Manage open limit orders (check fills, cancel stale)
     try:
         manage_open_orders(dry_run=dry_run)
@@ -1067,6 +1081,9 @@ def main():
     main._start_time = datetime.now(timezone.utc).isoformat()
     log("=" * 50)
     log(f"🚀 Bot starting ({'once' if args.once else 'daemon'})")
+    if config.SHADOW_MODE:
+        log("🜁 SHADOW MODE — all trades are simulated against the live book "
+            "with paper money (set SHADOW_MODE=0 to trade live)")
     log(f"   Interval: {config.LOOP_INTERVAL_SEC}s | SL: {config.STOP_LOSS_PCT:.0%} | TP: {config.TAKE_PROFIT_PCT:.0%} | MinVol: ${config.MIN_VOLUME_24H:,}")
     log("=" * 50)
 

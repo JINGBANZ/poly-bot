@@ -7,6 +7,15 @@ import tempfile
 import shutil
 
 
+@pytest.fixture(autouse=True)
+def _live_mode(monkeypatch):
+    """Force SHADOW_MODE off for the suite — existing tests exercise the
+    live execution path (mocking bot.api.market_buy etc.). Shadow tests
+    opt back in by setattr-ing config.SHADOW_MODE to True themselves."""
+    from bot import config
+    monkeypatch.setattr(config, "SHADOW_MODE", False)
+
+
 @pytest.fixture
 def tmp_state_dir(tmp_path, monkeypatch):
     """Redirect config paths to a temp directory."""

@@ -103,6 +103,8 @@ state/                   Runtime state (git-ignored, persisted between runs)
 ├── redemptions.json     Redeemed position history
 ├── resolved_cache.json  Already-resolved markets (dedup)
 ├── illiquid_sl.json     Stop-loss tracking for illiquid positions that can't sell yet
+├── shadow_ledger.json   Paper-trading ledger (cash, positions, closed trades) — see Shadow Trading
+├── shadow_equity.jsonl  Paper equity curve over time
 └── KILL_SWITCH          Touch this file to halt all trading
 
 analysis/                Research notes & strategy documents (human-readable)
@@ -117,6 +119,30 @@ python -m bot.main              # Run as daemon (loops every 5 min)
 python -m bot.main --once       # Run one cycle and exit
 python -m bot.main --dry-run    # Don't execute trades
 ```
+
+## Shadow (Paper) Trading
+
+`SHADOW_MODE` is **on by default** (`bot/config.py`) — every buy/sell the bot
+decides to make is simulated against the **live orderbook** with play money
+instead of being sent to the exchange. No wallet keys are needed. Everything
+upstream of the fill is real: market discovery, entry guardrails, spread/depth
+checks, AI gates. The fill walks the actual book (FOK — thin books reject the
+order), pays the real taker fee curve (`shares × rate × p × (1−p)`), and
+settles at $1/$0 when the market resolves on Gamma.
+
+```bash
+python -m bot.shadow              # performance report (equity, P&L, per-strategy ROI)
+python -m bot.shadow reset --yes  # wipe the paper ledger, restart at $100
+SHADOW_MODE=0 python -m bot.main  # trade live (requires wallet keys in .env)
+```
+
+Shadow state is fully separated from real state: `state/shadow_ledger.json`
+(cash + positions + closed trades), `state/shadow_equity.jsonl` (equity curve,
+one point per 30 min), `state/shadow_trade_log.jsonl`, and shadow-prefixed
+strategy state files. The paper bankroll starts at $100
+(`SHADOW_STARTING_CASH_USD`); strategy sizing, circuit breakers, and the
+ROI kill-switches all operate on it, so a one-to-two-week shadow run is a
+faithful dress rehearsal for going live.
 
 ## Trading Rules (from config.py)
 

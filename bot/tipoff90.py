@@ -47,8 +47,11 @@ MIN_ORDER_USD = 1.00  # Polymarket FOK market-order minimum
 # ---------------------------------------------------------------------------
 
 def _state_file() -> str:
-    # Resolved lazily so tests can monkeypatch config.STATE_DIR
-    return os.path.join(config.STATE_DIR, "tipoff90_state.json")
+    # Resolved lazily so tests can monkeypatch config.STATE_DIR.
+    # Shadow mode keeps its own state so paper trades never mix with real
+    # history (the ROI kill-switch must judge each mode on its own record).
+    name = "shadow_tipoff90_state.json" if config.SHADOW_MODE else "tipoff90_state.json"
+    return os.path.join(config.STATE_DIR, name)
 
 
 def _load_state() -> dict:

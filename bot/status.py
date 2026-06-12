@@ -84,6 +84,20 @@ def print_status():
     else:
         print("\n🔔 No pending alerts")
 
+    # Shadow trading summary
+    if config.SHADOW_MODE:
+        try:
+            from .shadow import performance_report
+            rep = performance_report()
+            print(f"\n🜁 SHADOW MODE — paper equity ${rep['equity']:.2f} "
+                  f"({rep['total_return_pct']:+.2f}%), "
+                  f"{len(rep['open_positions'])} open, "
+                  f"{rep['closed_trades']} closed "
+                  f"({rep['wins']}W/{rep['losses']}L)")
+            print("   Full report: python3 -m bot.shadow")
+        except Exception as e:
+            print(f"\n🜁 SHADOW MODE — report unavailable: {e}")
+
     # Kill switch
     if os.path.exists(config.KILL_SWITCH_FILE):
         print("\n🚨 KILL SWITCH IS ACTIVE — trading halted!")
