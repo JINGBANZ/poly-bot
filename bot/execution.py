@@ -163,28 +163,23 @@ def get_today_trades() -> list:
 
 def load_open_orders() -> list:
     """Load tracked open orders from state file."""
-    if not os.path.exists(OPEN_ORDERS_FILE):
-        return []
-    try:
-        with open(OPEN_ORDERS_FILE) as f:
-            return json.load(f)
-    except Exception as e:
-        log(f"⚠️ Error loading open orders: {e}")
-        return []
+    from . import statestore
+    orders = statestore.read_json(OPEN_ORDERS_FILE, default=[])
+    return orders if isinstance(orders, list) else []
 
 
 def save_open_orders(orders: list):
-    """Save open orders to state file."""
-    os.makedirs(config.STATE_DIR, exist_ok=True)
-    with open(OPEN_ORDERS_FILE, "w") as f:
-        json.dump(orders, f, indent=2)
+    """Save open orders to state file (atomic, locked)."""
+    from . import statestore
+    with statestore.locked(OPEN_ORDERS_FILE):
+        statestore.write_json(OPEN_ORDERS_FILE, orders)
 
 
 def track_order(order_id: str, token_id: str, side: str, price: float,
                 size: float, name: str = "", reason: str = ""):
     """Add a new order to the open orders tracker."""
-    orders = load_open_orders()
-    orders.append({
+    from . import statestore
+    entry = {
         "order_id": order_id,
         "token_id": token_id,
         "side": side,
@@ -193,15 +188,19 @@ def track_order(order_id: str, token_id: str, side: str, price: float,
         "name": name,
         "reason": reason,
         "placed_at": datetime.now(timezone.utc).isoformat(),
-    })
-    save_open_orders(orders)
+    }
+    statestore.locked_update(OPEN_ORDERS_FILE,
+                             lambda orders: orders.append(entry),
+                             default=list)
 
 
 def remove_order(order_id: str):
     """Remove an order from the tracker."""
-    orders = load_open_orders()
-    orders = [o for o in orders if o.get("order_id") != order_id]
-    save_open_orders(orders)
+    from . import statestore
+    statestore.locked_update(
+        OPEN_ORDERS_FILE,
+        lambda orders: [o for o in orders if o.get("order_id") != order_id],
+        default=list)
 
 
 def get_stale_orders(max_age_hours: float = 24.0) -> list:
@@ -235,22 +234,28 @@ def order_succeeded(result) -> bool:
 
 
 def _place_buy(token_id: str, amount_usd: float, market_name: str,
-               reason: str, thesis: str) -> dict | None:
-    """Route a buy to the real CLOB or the shadow ledger per config."""
+               reason: str, thesis: str,
+               signal_ts: float | None = None) -> dict | None:
+    """Route a buy to the real CLOB or the shadow ledger per config.
+
+    signal_ts (epoch seconds of the triggering event) makes shadow fills
+    latency-adjusted — see bot/shadow.py. Ignored for live orders.
+    """
     if config.SHADOW_MODE:
         from .shadow import shadow_buy
         return shadow_buy(token_id, amount_usd, name=market_name,
-                          reason=reason, thesis=thesis)
+                          reason=reason, thesis=thesis, signal_ts=signal_ts)
     from .api import market_buy
     return market_buy(token_id, amount_usd)
 
 
 def _place_sell(token_id: str, size: float, market_name: str,
-                reason: str) -> dict | None:
+                reason: str, signal_ts: float | None = None) -> dict | None:
     """Route a sell to the real CLOB or the shadow ledger per config."""
     if config.SHADOW_MODE:
         from .shadow import shadow_sell
-        return shadow_sell(token_id, size, name=market_name, reason=reason)
+        return shadow_sell(token_id, size, name=market_name, reason=reason,
+                           signal_ts=signal_ts)
     from .api import market_sell
     return market_sell(token_id, size)
 
@@ -331,7 +336,8 @@ def execute_buy(token_id: str, amount_usd: float, market_name: str,
 
 def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
                          reason: str, entry_price: float,
-                         thesis: str = "") -> dict:
+                         thesis: str = "",
+                         signal_ts: float | None = None) -> dict:
     """Buy pipeline for self-guarded strategy modules (e.g. Tipoff 90).
 
     Unlike execute_buy, this does NOT apply the cheap-side guards (85c
@@ -351,7 +357,8 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
         return {"success": False, "error": f"Invalid entry price {entry_price}"}
 
     from .journal import record as journal
-    result = _place_buy(token_id, amount_usd, market_name, reason, thesis)
+    result = _place_buy(token_id, amount_usd, market_name, reason, thesis,
+                        signal_ts=signal_ts)
     if order_succeeded(result):
         shares = result.get("shares") or round(amount_usd / entry_price, 4)
         tag = _mode_tag()
@@ -364,7 +371,9 @@ def execute_strategy_buy(token_id: str, amount_usd: float, market_name: str,
         journal("buy", strategy=reason, market=market_name, status="filled",
                 token_id=token_id, entry_price=entry_price, shares=shares,
                 amount_usd=amount_usd, fee_usd=result.get("fee_usd"),
-                fill_price=result.get("avg_price"), thesis=thesis)
+                fill_price=result.get("avg_price"), thesis=thesis,
+                signal_ts=signal_ts,
+                latency_ms=result.get("signal_to_fill_ms"))
         return {"success": True, "result": result, "shares": shares}
     log(f"  ❌ Buy failed ({reason}): {market_name[:50]}: {result}")
     journal("buy", strategy=reason, market=market_name, status="failed",
@@ -387,7 +396,8 @@ def is_sell_on_cooldown(token_id: str) -> bool:
 
 
 def execute_sell(token_id: str, size: float, market_name: str,
-                 reason: str, price: float = 0, pnl: float = 0) -> dict:
+                 reason: str, price: float = 0, pnl: float = 0,
+                 signal_ts: float | None = None) -> dict:
     """Complete sell pipeline: sell → log → alert. Returns result dict.
     
     Args:
@@ -415,7 +425,8 @@ def execute_sell(token_id: str, size: float, market_name: str,
     # at low prices (fix #21).
     from .journal import record as journal
     sell_value_usd = size * price if price > 0 else 0
-    result = _place_sell(token_id, size, market_name, reason)
+    result = _place_sell(token_id, size, market_name, reason,
+                         signal_ts=signal_ts)
     if order_succeeded(result):
         tag = _mode_tag()
         log(f"  ✅ {tag}Sold: {market_name[:50]} — {size:.1f} shares for ~${sell_value_usd:.2f}")
@@ -424,7 +435,9 @@ def execute_sell(token_id: str, size: float, market_name: str,
         journal("sell", strategy=reason, market=market_name, status="filled",
                 token_id=token_id, shares=size, price=price,
                 pnl_usd=result.get("pnl_usd", pnl),
-                fill_price=result.get("avg_price"))
+                fill_price=result.get("avg_price"),
+                signal_ts=signal_ts,
+                latency_ms=result.get("signal_to_fill_ms"))
         # Record sell for cooldown tracking (fix #29)
         _recent_sells[token_id] = _time.time()
         return {"success": True, "result": result}

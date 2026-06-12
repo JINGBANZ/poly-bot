@@ -2,57 +2,78 @@
 
 ## Overview
 
-One daemon, modular design, no bloat.
+One event-driven daemon (`python -m bot.main`), modular design, no bloat.
+Full design rationale: `analysis/event_driven_architecture.md`.
 
 ```
-                    ┌─────────────────┐
-                    │   systemd        │
-                    │ polymarket-bot   │
-                    └────────┬────────┘
+                  ┌─────────────────────┐
+                  │ systemd / daemon.sh  │
+                  └──────────┬──────────┘
                              │
-                    ┌────────▼────────┐
-                    │   bot/main.py    │  ← daemon loop (every 5 min)
-                    └────────┬────────┘
+                  ┌──────────▼──────────┐
+                  │     bot/main.py      │  ← entry point
+                  └──────────┬──────────┘
                              │
-              ┌──────────────┼──────────────┐
-              │              │              │
-     ┌────────▼──────┐ ┌────▼─────┐ ┌──────▼──────┐
-     │  portfolio.py  │ │guardrails│ │  resolver   │
-     │  (positions,   │ │(SL/TP,  │ │ (resolved?) │
-     │   P&L)         │ │ entry)  │ │             │
-     └────────┬──────┘ └────┬─────┘ └──────┬──────┘
-              │              │              │
-              └──────────────┼──────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │    api.py        │  ← ALL external calls
-                    │  (data-api,     │
-                    │   CLOB, Gamma)  │
-                    └─────────────────┘
+                  ┌──────────▼──────────┐     wss market channel
+                  │  bot/core/engine.py  │◄────┐
+                  │  asyncio event loop  │     │
+                  └─┬───────┬───────┬───┘  ┌──┴───────────┐
+        risk first  │       │       │      │ core/feed.py  │
+                    │       │       │      │ + core/books  │
+        ┌───────────▼─┐ ┌───▼─────┐ ┌▼─────┴───┐
+        │ core/risk.py │ │strategy │ │ slow lane │
+        │ SL/TP/kill   │ │ actors  │ │ LLM, news,│
+        │ (dedicated   │ │TIPOFF90 │ │ scans,    │
+        │  executor)   │ │THRESHOLD│ │ sweeps    │
+        └──────┬──────┘ │WHALE    │ └─────┬─────┘
+               │         └────┬────┘       │
+               └──────────────┼────────────┘
+                              │
+                   ┌──────────▼──────────┐
+                   │ execution.py → api.py│  ← ALL orders / external calls
+                   │ (shadow.py when      │
+                   │  SHADOW_MODE)        │
+                   └─────────────────────┘
 ```
 
-## Data Flow
+## Data flow
 
-1. `main.py` starts daemon loop
-2. Each cycle calls `api.get_positions()` → on-chain source of truth
-3. Builds `Portfolio` from raw data → computed P&L
-4. For each position: `resolver.check_resolution()` → won/lost?
-5. For each position: `guardrails.check_position()` → SL/TP triggered?
-6. Any alerts → `alerts.write_alert()` → picked up by the alert consumer (notifier/cron)
-7. State saved to `state/positions.json`
+1. `core/feed.py` streams book events for every held position + strategy
+   watchlist token into `core/books.py` (the freshest-book cache).
+2. The engine dispatches each event: **risk first** (`core/risk.py` —
+   stop-loss/take-profit/kill-switch on a dedicated executor that nothing
+   slow can block), then shadow maker-fill checks, then strategy `on_book`
+   handlers (one single-thread actor per strategy).
+3. Slow analysis (LLM research, news, market scans) and housekeeping
+   (resolutions, illiquid escalation, redemption, order management) run on
+   wall-clock timers in a separate slow pool —
+   `bot/strategies/housekeeping.py`.
+4. A 60s reconcile job REST-refreshes stale books (batched), re-mirrors
+   positions, settles shadow resolutions, and heartbeats
+   `state/last_cycle.json`. It is the full fallback when the WS is down.
+5. Every decision — taken and skipped — journals to
+   `state/decision_journal.jsonl` with event→decision latency.
 
-## Key Principles
+## Key principles
 
 - **api.py is the gateway.** No other module makes HTTP calls.
 - **config.py is the truth.** No magic numbers elsewhere.
-- **State is minimal.** positions.json + trade_log.jsonl + pending_alerts.jsonl.
-- **Data-api is the source of truth** for positions. Not local JSON.
-- **Daemon, not cron.** One process, always running, catches everything.
+- **Risk can never wait.** Exits run on their own executor; research and
+  scans run elsewhere. This is structural, not a priority flag.
+- **statestore.py is the only way to mutate shared JSON.** Thread lock +
+  flock + atomic write; never network I/O under a lock.
+- **Restart-anytime.** All durable state lives on disk; in-memory state is
+  a rebuildable cache. Kill -9 loses nothing.
+- **Data-api is the source of truth** for live positions; the shadow
+  ledger for paper positions.
+- **Daemon, not cron.** One process, always listening.
 
-## Adding New Features
+## Adding new features
 
-See CONTRIBUTING.md for rules. TL;DR:
-- New periodic check → add to `run_cycle()` in main.py
-- New API call → add to api.py
-- New standalone tool → add to scripts/
-- New module → must have single clear purpose, add to bot/
+- New strategy → implement `bot/core/strategy.StrategyPlugin` (watchlist,
+  `on_book`, timers, `owns_position`) in `bot/strategies/`, register in
+  `build_default_strategies()`. Journal every decision (README rules).
+- New periodic job → a `TimerSpec` in
+  `bot/strategies/housekeeping.build_housekeeping_timers()`.
+- New API call → add to api.py.
+- New module → single clear purpose, add to bot/. See CONTRIBUTING.md.

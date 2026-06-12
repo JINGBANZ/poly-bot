@@ -100,9 +100,31 @@ BALANCE_FLOOR_USD = 1.00      # Never spend below this USDC balance
 KILL_SWITCH_FILE = os.path.join(STATE_DIR, "KILL_SWITCH")  # Touch this file to halt all trading
 
 # Bot timing
-LOOP_INTERVAL_SEC = 300       # Main loop: check every 5 minutes
-SCAN_INTERVAL_SEC = 1800      # Market scan: every 30 minutes
-DEEP_SCAN_INTERVAL_SEC = 3600 # Deep research: every hour
+# The event-driven core (bot/core) reacts to WebSocket book events
+# immediately; these intervals drive the slow, scheduled work only.
+LOOP_INTERVAL_SEC = 300       # Legacy cycle length; now the default strategy timer cadence
+SCAN_INTERVAL_SEC = 1800      # News + LLM position analysis: every 30 minutes
+DEEP_SCAN_INTERVAL_SEC = 3600 # LLM market scan + deep research: every hour
+
+# ── Event-driven core (bot/core) ──
+WS_MARKET_URL = os.environ.get(
+    "POLY_WS_MARKET_URL",
+    "wss://ws-subscriptions-clob.polymarket.com/ws/market")
+WS_PING_INTERVAL_SEC = 5      # docs require a PING at least every ~10s
+WS_RECV_TIMEOUT_SEC = 30      # no frame for this long → reconnect
+WS_RECONNECT_MIN_SEC = 1      # exponential backoff bounds for reconnects
+WS_RECONNECT_MAX_SEC = 60
+BOOK_STALE_SEC = 60           # watched book with no update for this long → REST refresh
+RECONCILE_INTERVAL_SEC = 60   # REST reconcile sweep (positions, settlement, marking)
+WATCHLIST_REFRESH_SEC = 60    # re-derive watchlist (held positions + strategy lists)
+RISK_EXECUTOR_WORKERS = 2     # dedicated threads for exit order placement
+SLOW_LANE_WORKERS = 2         # threads for research/LLM/news/scans (never risk work)
+LATENCY_STATS_INTERVAL_SEC = 900  # journal event→decision latency percentiles
+
+# Shadow fill realism for event-driven strategies: a paper fill is taken
+# against the book observed this many ms AFTER the signal, so fast strategies
+# aren't graded with impossible zero-latency executions. 0 = legacy behavior.
+SHADOW_FILL_LATENCY_MS = int(os.environ.get("SHADOW_FILL_LATENCY_MS", "250"))
 
 # Tipoff 90 strategy — NBA pre-game heavy favorites
 # (see analysis/nba_favorites_strategy.md; backtest 84/84, +7.5%/trade)

@@ -45,6 +45,34 @@ def get_book(token_id: str) -> dict:
         log.warning("get_book(%s) failed: %s", token_id, e)
         return {"bids": [], "asks": []}
 
+def get_books(token_ids: list[str]) -> dict[str, dict]:
+    """Batch-fetch orderbooks via POST /books. Returns {token_id: book}.
+
+    Used by the event core's REST fallback poller — one request for the whole
+    watchlist instead of a GET /book per token. Falls back to per-token GETs
+    if the batch endpoint fails.
+    """
+    if not token_ids:
+        return {}
+    try:
+        r = requests.post(
+            f"{config.CLOB_API}/books",
+            json=[{"token_id": t} for t in token_ids],
+            timeout=15,
+        )
+        r.raise_for_status()
+        out = {}
+        for b in r.json():
+            tid = b.get("asset_id") or b.get("token_id")
+            if tid:
+                out[str(tid)] = b
+        if out:
+            return out
+    except Exception as e:
+        log.warning("get_books batch failed (%s) — falling back to per-token", e)
+    return {t: get_book(t) for t in token_ids}
+
+
 def best_bid(book: dict) -> tuple[float, float]:
     """Returns (best_bid_price, total_bid_depth_usd) from top 5 levels."""
     bids = book.get("bids", [])
