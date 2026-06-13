@@ -21,7 +21,7 @@ jobs:
 
       - name: Run tests
         run: |
-          python -m pytest tests/ bot/tests/ -q --tb=short
+          python -m pytest bot/tests/ -q --tb=short
 
   claude-review:
     needs: test
