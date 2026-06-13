@@ -3,7 +3,7 @@ name: CI — Smoke Tests
 on:
   push:
     branches: [main]
-    paths: ['bot/**', 'bot/tests/**', 'requirements*.txt', '.github/workflows/ci.yml']
+    paths: ['bot/**', 'tests/**', 'bot/tests/**', 'requirements*.txt', 'pytest.ini', '.github/workflows/ci.yml']
   pull_request:
     branches: [main]
 
@@ -28,4 +28,4 @@ jobs:
 
       - name: Run full test suite
         run: |
-          python -m pytest bot/tests/ -v --tb=short
+          python -m pytest tests/ bot/tests/ --tb=short

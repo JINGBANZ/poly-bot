@@ -25,10 +25,21 @@ class TestStopLoss:
         result = check_position(pos)
         assert result.action == "SELL_SL"
 
-    def test_no_trigger_at_49pct(self):
-        pos = _make_pos(entry=0.40, current=0.204)  # -49%
+    def test_no_trigger_just_above_threshold(self):
+        # Derive from config so the test tracks STOP_LOSS_PCT (tightened to
+        # 0.35 in fix #29) instead of hardcoding a stale boundary.
+        entry = 0.40
+        just_above = entry * (1 - (config.STOP_LOSS_PCT - 0.02))  # ~-33%
+        pos = _make_pos(entry=entry, current=round(just_above, 4))
         result = check_position(pos)
         assert result.action == "HOLD"
+
+    def test_triggers_at_threshold(self):
+        entry = 0.40
+        at_threshold = entry * (1 - config.STOP_LOSS_PCT)  # exactly -STOP_LOSS_PCT
+        pos = _make_pos(entry=entry, current=round(at_threshold, 4))
+        result = check_position(pos)
+        assert result.action == "SELL_SL"
 
     def test_no_trigger_small_loss(self):
         pos = _make_pos(entry=0.30, current=0.25)

@@ -578,7 +578,7 @@ def test_threshold_cooldown_and_blacklist():
 
 def test_dust_position_filter():
     """Dust positions (value AND cost < MIN_REVIEW_VALUE) are excluded from review."""
-    from bot.main import _is_dust_position, MIN_REVIEW_VALUE
+    from bot.strategies.housekeeping import _is_dust_position, MIN_REVIEW_VALUE
 
     class FakePos:
         def __init__(self, size, entry, current):

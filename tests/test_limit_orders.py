@@ -93,12 +93,13 @@ class TestStaleOrders:
 
 
 class TestManageOpenOrders:
-    """Test the manage_open_orders function from main.py."""
+    """Test manage_open_orders (moved from main.py to the
+    housekeeping job module in the event-driven rearchitecture)."""
 
     @patch("bot.api.get_open_orders", return_value=[])
     @patch("bot.api.cancel_order", return_value=True)
     def test_detects_fill(self, mock_cancel, mock_get_orders):
-        from bot.main import manage_open_orders
+        from bot.strategies.housekeeping import manage_open_orders
         # Track an order, then simulate it not being in live orders (= filled)
         execution_mod.track_order("ord1", "tok1", "SELL", 0.50, 10.0, "Test")
         manage_open_orders(dry_run=False)
@@ -109,7 +110,7 @@ class TestManageOpenOrders:
     @patch("bot.api.get_open_orders", return_value=[{"id": "ord1"}])
     @patch("bot.api.cancel_order", return_value=True)
     def test_keeps_live_order(self, mock_cancel, mock_get_orders):
-        from bot.main import manage_open_orders
+        from bot.strategies.housekeeping import manage_open_orders
         execution_mod.track_order("ord1", "tok1", "SELL", 0.50, 10.0, "Test")
         manage_open_orders(dry_run=False)
         orders = execution_mod.load_open_orders()
@@ -118,7 +119,7 @@ class TestManageOpenOrders:
     @patch("bot.api.get_open_orders", return_value=[])
     @patch("bot.api.cancel_order", return_value=True)
     def test_cancels_stale(self, mock_cancel, mock_get_orders):
-        from bot.main import manage_open_orders
+        from bot.strategies.housekeeping import manage_open_orders
         execution_mod.track_order("ord1", "tok1", "SELL", 0.50, 10.0)
         orders = execution_mod.load_open_orders()
         old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()

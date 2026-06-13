@@ -78,14 +78,35 @@ All credentials live in `<repo>/.env` (template: `.env.example`; override path v
 
 ## Architecture
 
+The bot is **event-driven**: a WebSocket market feed streams book events for
+every held position and strategy watchlist token into an asyncio engine that
+runs risk checks (stop-loss / take-profit / kill switch) on a dedicated hot
+path — exits can never be delayed by LLM research or scans, which run on
+isolated worker threads with wall-clock timers. REST is used only for
+reconciliation and as fallback when the feed is down. Design doc:
+`analysis/event_driven_architecture.md`.
+
 All trading, scanning, resolution, redemption, and research logic lives in the `bot/` package. Key modules (see `bot/` for the full set):
 
 ```
 bot/                     Core daemon package (run via `python -m bot.main`)
 ├── config.py            All settings — single source of truth for thresholds, paths, API URLs
-├── main.py              Daemon loop entry point (positions → guardrails → resolution → redemption → scanning)
+├── main.py              Entry point — boots the event-driven engine (or one pass with --once)
+├── core/                Event-driven core
+│   ├── engine.py        Orchestrator: event dispatch, timers, executor lanes, watchlist
+│   ├── feed.py          WSS market-channel client (ping, reconnect, resubscribe, gap detect)
+│   ├── books.py         Thread-safe freshest-book cache
+│   ├── risk.py          Hot-path exit engine (SL/TP/kill-switch, latency-journaled)
+│   └── strategy.py      Strategy plugin protocol + registry
+├── strategies/          Strategy plugins + housekeeping jobs
+│   ├── __init__.py      build_default_strategies(): TIPOFF90, THRESHOLD, WHALE
+│   ├── whale.py         Whale-follow plugin
+│   └── housekeeping.py  Ported run_cycle work: positions sweep, order mgmt, news/LLM, scans
+├── statestore.py        Concurrency-safe JSON state (thread lock + flock + atomic writes)
 ├── api.py               All external API calls (data-api, CLOB, Gamma)
 ├── execution.py         All buys/sells go through here (order placement, trade logging, circuit breakers)
+├── shadow.py            Paper-trading ledger: taker + maker fill simulation (see Shadow Trading)
+├── journal.py           Decision journal (see Evaluation & Decision Logging)
 ├── portfolio.py         Position & Portfolio classes with P&L calculation
 ├── guardrails.py        Stop-loss (-35%), take-profit (+200%), entry validation
 ├── resolver.py          Market resolution detection (checks if markets closed + winner)
@@ -115,10 +136,17 @@ logs/                    Bot logs (logs/bot.log)
 ## Bot Daemon
 
 ```bash
-python -m bot.main              # Run as daemon (loops every 5 min)
-python -m bot.main --once       # Run one cycle and exit
+python -m bot.main              # Run the event-driven daemon (listens continuously)
+python -m bot.main --once       # One housekeeping/strategy pass and exit (no WebSocket)
 python -m bot.main --dry-run    # Don't execute trades
 ```
+
+The daemon subscribes to Polymarket's market WebSocket channel for every held
+position and strategy watchlist token; book events hit the risk hot path
+(stop-loss / take-profit / kill switch) within milliseconds. Slow work (LLM
+research every 30–60 min, scans, housekeeping sweeps) runs on wall-clock
+timers in isolated worker threads. `state/last_cycle.json` is the engine
+heartbeat for status tooling.
 
 ## Shadow (Paper) Trading
 
@@ -146,8 +174,18 @@ faithful dress rehearsal for going live.
 
 The ledger is plain JSON on disk and is the single source of truth — the bot
 can be stopped and restarted at any time and the paper portfolio resumes
-exactly where it left off. A corrupt ledger is backed up
+exactly where it left off (all access goes through `bot/statestore.py` locks,
+so CLI tools can't race the daemon). A corrupt ledger is backed up
 (`shadow_ledger.json.corrupt-<ts>`), never silently discarded.
+
+Two fill-realism features for fast strategies (see
+`analysis/event_driven_architecture.md`): **latency-adjusted taker fills**
+(orders stamped with a signal time fill against the book observed
+`SHADOW_FILL_LATENCY_MS` (default 250ms) later — fast strategies aren't graded
+with impossible zero-latency executions) and a **maker/limit simulation**
+(`shadow_place_limit`: resting post-only paper orders that fill at the limit
+price with zero fee only when the market trades strictly *through* the level —
+conservative on fill rate, honest on adverse selection).
 
 ## Evaluation & Decision Logging (CRITICAL — read this before changing strategies)
 
@@ -165,6 +203,9 @@ declined to do — so the decision trail is as important as the trades.
 | `research` | the research pipeline issues TRADE/PASS | verdict, reason, thesis, scan_reason |
 | `buy` / `sell` | an order fills or fails | fill_price vs entry_price, fee, pnl, thesis |
 | `settle` | a held position resolves | result won/lost, pnl, original thesis |
+| `risk_exit` | the hot-path risk engine fires an exit | trigger, bid/entry, pnl_pct, event_ts, decision_latency_ms |
+| `exit_skip` | an exit triggered but was skipped | trigger, detail (strategy_held / kill switch / illiquid) |
+| `latency_stats` | periodic engine health | event→decision latency percentiles, feed stats |
 
 **Rules for future agents working on this repo:**
 
@@ -198,7 +239,7 @@ declined to do — so the decision trail is as important as the trades.
 | Min 24h volume | $50,000 |
 | Max position size | $2.00 |
 | Value zone | 10¢–25¢ |
-| Loop interval | 5 minutes |
+| Reaction | event-driven (book events, sub-second); slow jobs on 60s–3600s timers |
 
 `config.py` is the single source of truth — values above can drift, so check it if in doubt.
 
@@ -212,6 +253,7 @@ declined to do — so the decision trail is as important as the trades.
 
 Declared in `requirements.txt`, installed into the repo-local `venv/` (see [Setup](#setup)):
 - `requests` — HTTP client for all API calls
+- `websockets` — Polymarket market-channel WebSocket client (event-driven core)
 - `py-clob-client` — Polymarket CLOB trading client
 - `feedparser`, `ddgs`, `python-dateutil` — RSS news + web search for research
 - `web3`, `eth-account`, `eth-abi` — blockchain interaction

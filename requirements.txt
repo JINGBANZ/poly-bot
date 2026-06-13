@@ -4,6 +4,9 @@
 # HTTP + market data
 requests
 
+# Event-driven core: Polymarket WSS market-channel client (bot/core/feed.py)
+websockets
+
 # Polymarket CLOB trading client
 py-clob-client
 
